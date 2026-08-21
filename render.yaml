@@ -14,7 +14,7 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    plan: starter            # 512 MB RAM is tight for 150k vectors + ONNX; use Standard (2GB) if OOM
+    plan: standard            # ONNX embedding model needs ~380MB RSS; starter (512MB) OOMs on first query
     healthCheckPath: /health
     envVars:
       - key: PYTHONUNBUFFERED
