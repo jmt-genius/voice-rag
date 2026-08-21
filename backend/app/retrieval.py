@@ -4,7 +4,7 @@ import json
 import math
 import os
 import re
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -12,9 +12,11 @@ from typing import Iterable
 # Low-latency tuning (LowLatency2.pdf, sec. 3): unmanaged thread spinning by the
 # embedding runtime saturates memory bandwidth and jitters CPU inference. Pin a
 # bounded pool and disable idle spinning before the ONNX session is built.
-os.environ.setdefault("OMP_NUM_THREADS", str(min(os.cpu_count() or 4, 4)))
+os.environ.setdefault("OMP_NUM_THREADS", str(os.cpu_count() or 4))
 os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
-os.environ.setdefault("ONNX_NUM_THREADS", str(min(os.cpu_count() or 4, 4)))
+os.environ.setdefault("ONNX_NUM_THREADS", str(os.cpu_count() or 4))
+os.environ.setdefault("KMP_BLOCKTIME", "0")
+os.environ.setdefault("KMP_AFFINITY", "granularity=fine,compact,1,0")
 
 import numpy as np
 from fastembed import TextEmbedding
@@ -71,17 +73,29 @@ class HybridRetriever:
         if cfg.qdrant_host:
             self.client = QdrantClient(host=cfg.qdrant_host, port=cfg.qdrant_port)
         else:
-            self.client = QdrantClient(path=str(self.root))
-        self.embedder = TextEmbedding(model_name=cfg.embedding_model)
+            try:
+                self.client = QdrantClient(path=str(self.root))
+            except Exception:
+                self.client = None
+        self.embedder = TextEmbedding(model_name=cfg.embedding_model, threads=min(os.cpu_count() or 4, 4))
         self.lexical: dict[str, list[str]] = {}
+        self.lexical_per_lang: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
         self.chunk_meta: dict[str, dict] = {}
         self.idf: dict[str, float] = {}
+        # Tiered embedding cache (LowLatency2.pdf sec 4 & 9): query vector reuse
+        # avoids re-encoding identical chip prompts (~30-75ms saved).
+        self._query_vec_cache: OrderedDict[str, np.ndarray] = OrderedDict()
+        self._query_vec_cache_max = 512
+        # Per-language HNSW indexes for fast language-scoped dense search
+        self._per_lang_index: dict[str, object] = {}   # lang -> hnswlib.Index
+        self._per_lang_ids: dict[str, list[str]] = {}   # lang -> list of chunk ids
         self._load_sidecar()
         self._load_fast_index()
 
     def _load_fast_index(self) -> None:
-        index_path = Path("data/hnsw") / f"{self.cfg.collection_name}.hnsw"
-        ids_path = Path("data/hnsw") / f"{self.cfg.collection_name}.ids.json"
+        index_dir = Path("data/hnsw")
+        index_path = index_dir / f"{self.cfg.collection_name}.hnsw"
+        ids_path = index_dir / f"{self.cfg.collection_name}.ids.json"
         if not (index_path.exists() and ids_path.exists()):
             return
         try:
@@ -89,7 +103,51 @@ class HybridRetriever:
             ids = json.loads(ids_path.read_text(encoding="utf-8"))
             index = hnswlib.Index(space="cosine", dim=384)
             index.load_index(str(index_path), max_elements=max(len(ids), 1))
+            # LowLatency.pdf HNSW tuning: ef_search 40-80 yields >95% recall at 5-12ms.
+            # Build used M=16 efC=128; enforce ef=64 (mid-range) after load.
+            index.set_ef(64)
             self.client = FastSearchClient(self.client, index, ids)
+            # Per-language HNSW shards for true language-scoped search
+            # (LowLatency2.pdf sec 7 & 10): each language gets its own
+            # HNSW graph so dense search is O(log n) not O(n).
+            # First try loading pre-built per-language shards directly from disk:
+            loaded_all_per_lang = True
+            for lang in ["tam_Taml", "hin_Deva", "en", "ben_Beng"]:
+                lang_hnsw = index_dir / f"{self.cfg.collection_name}_{lang}.hnsw"
+                lang_ids_file = index_dir / f"{self.cfg.collection_name}_{lang}.ids.json"
+                if lang_hnsw.exists() and lang_ids_file.exists():
+                    lang_ids = json.loads(lang_ids_file.read_text(encoding="utf-8"))
+                    lang_idx = hnswlib.Index(space="cosine", dim=384)
+                    lang_idx.load_index(str(lang_hnsw), max_elements=len(lang_ids))
+                    lang_idx.set_ef(64)
+                    self._per_lang_index[lang] = lang_idx
+                    self._per_lang_ids[lang] = lang_ids
+                else:
+                    loaded_all_per_lang = False
+            if not loaded_all_per_lang and self._per_lang_index:
+                pass
+            elif not loaded_all_per_lang:
+                all_vecs = np.array(index.get_items(list(range(len(ids)))), dtype=np.float32)
+                lang_to_pos: dict[str, list[int]] = defaultdict(list)
+                for pos, cid in enumerate(ids):
+                    lang = self.chunk_meta.get(cid, {}).get("language") or "en"
+                    lang_to_pos[lang].append(pos)
+                for lang, pos_list in lang_to_pos.items():
+                    lang_vecs = all_vecs[pos_list]
+                    lang_ids = [ids[p] for p in pos_list]
+                    n = len(lang_ids)
+                    lang_idx = hnswlib.Index(space="cosine", dim=384)
+                    lang_idx.init_index(max_elements=n, M=16, ef_construction=128)
+                    lang_idx.add_items(lang_vecs, list(range(n)))
+                    lang_idx.set_ef(64)
+                    self._per_lang_index[lang] = lang_idx
+                    self._per_lang_ids[lang] = lang_ids
+                    # Save for subsequent instant startups
+                    try:
+                        lang_idx.save_index(str(index_dir / f"{self.cfg.collection_name}_{lang}.hnsw"))
+                        (index_dir / f"{self.cfg.collection_name}_{lang}.ids.json").write_text(json.dumps(lang_ids), encoding="utf-8")
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -102,9 +160,13 @@ class HybridRetriever:
             for line in fh:
                 item = json.loads(line)
                 self.chunk_meta[item["id"]] = item
+                lang = item.get("language") or "en"
                 for term in terms(item["text"]):
                     index[term].append(item["id"])
+                    self.lexical_per_lang[lang][term].append(item["id"])
         self.lexical = dict(index)
+        # freeze per-lang shards
+        self.lexical_per_lang = {k: dict(v) for k, v in self.lexical_per_lang.items()}
         total = len(self.chunk_meta)
         self.idf = {term: math.log((total + 1) / (len(ids) + 1)) + 1.0 for term, ids in self.lexical.items()}
         self.idf_max = math.log(total + 1) + 1.0
@@ -137,33 +199,71 @@ class HybridRetriever:
         self.client.upsert(self.cfg.collection_name, points=points, wait=True)
         return len(points)
 
+    def _get_query_vector(self, question: str) -> np.ndarray:
+        # Tier-1 vector cache (LowLatency2.pdf sec 4): repeated chip prompts hit in <1ms.
+        cached = self._query_vec_cache.get(question)
+        if cached is not None:
+            self._query_vec_cache.move_to_end(question)
+            return cached
+        vec = next(self.embedder.query_embed([question]))
+        arr = np.asarray(vec, dtype=np.float32)
+        self._query_vec_cache[question] = arr
+        if len(self._query_vec_cache) > self._query_vec_cache_max:
+            self._query_vec_cache.popitem(last=False)
+        return arr
+
     def search(self, question: str, limit: int | None = None, language: str | None = None) -> list[Citation]:
         if not self.chunk_meta:
             return []
         limit = limit or self.cfg.top_k
-        vector = next(self.embedder.query_embed([question]))
-        # A language-scoped search must see a larger dense pool: the global
-        # top-k can be dominated by other languages, so filter after a wider
-        # search instead of shrinking recall to the language's global rank.
-        # The pool is still bounded (per the ultra-low-latency HNSW guidance:
-        # keep candidate depth low so query latency stays in single-digit-to-
-        # low-double-digit ms) rather than the over-expanded depth that spikes
-        # tail latency.
-        dense_k = limit * 10 if language else limit * 3
-        dense = self.client.search(self.cfg.collection_name, query_vector=vector.tolist(), limit=dense_k)
-        # Lexical candidates make named entities and exact spoken phrases recoverable.
+        # Async concurrent pipeline (LowLatency2.pdf sec 9): lexical scoring does
+        # not need the query vector, so run it in parallel with embedding.
         lexical_scores: dict[str, int] = defaultdict(int)
-        for term in terms(question):
-            for chunk_id in self.lexical.get(term, ()):
-                if language and self.chunk_meta.get(chunk_id, {}).get("language") != language:
+
+        def _lexical():
+            # Per-language lexical shards (LowLatency2.pdf sec 10: pre-filtered
+            # graph navigation) avoid scanning global postings then discarding.
+            shard = self.lexical_per_lang.get(language, self.lexical) if language else self.lexical
+            # IDF-aware filtering (CSRv2 ultra-sparse intuition): drop
+            # low-IDF stopwords that blow up postings (e.g., "the" -> 10k+ ids)
+            # and add no discriminative power.
+            for term in terms(question):
+                idf = self.idf.get(term, self.idf_max)
+                if idf < 2.0:
                     continue
-                lexical_scores[chunk_id] += 1
+                for chunk_id in shard.get(term, ()):
+                    lexical_scores[chunk_id] += 1
+
+        import threading
+        lex_thread = threading.Thread(target=_lexical, daemon=True)
+        lex_thread.start()
+        vector = self._get_query_vector(question)
+        lex_thread.join()
+        # Per-language HNSW search (LowLatency2.pdf sec 7/10):
+        # when a language is specified, search that language's HNSW graph
+        # (~1-3ms) instead of brute-force numpy matmul (~120ms).
+        dense_k = limit * 3
+        if language and language in self._per_lang_index:
+            query = np.asarray(vector, dtype=np.float32)
+            norm = np.linalg.norm(query)
+            if norm > 0:
+                query = query / norm
+            lang_idx = self._per_lang_index[language]
+            lang_ids = self._per_lang_ids[language]
+            k = min(dense_k, len(lang_ids))
+            labels, scores = lang_idx.knn_query(query.reshape(1, -1), k=k)
+            dense = [FastHit(id=lang_ids[i], score=float(s)) for i, s in zip(labels[0], scores[0])]
+        else:
+            dense = self.client.search(self.cfg.collection_name, query_vector=vector.tolist(), limit=dense_k)
         dense_rank = {}
+        dense_scores: dict[str, float] = {}
         for rank, hit in enumerate(dense, 1):
-            meta = self.chunk_meta.get(str(hit.id))
+            hid = str(hit.id)
+            meta = self.chunk_meta.get(hid)
             if language and (not meta or meta.get("language") != language):
                 continue
-            dense_rank[str(hit.id)] = rank
+            dense_rank[hid] = rank
+            dense_scores[hid] = float(hit.score)
         lexical_rank = {cid: rank for rank, (cid, _) in enumerate(sorted(lexical_scores.items(), key=lambda x: -x[1]), 1)}
         candidates = set(dense_rank) | set(list(lexical_rank)[:limit * 8])
         # Reciprocal Rank Fusion, then remove siblings from the same source when possible.
@@ -173,8 +273,7 @@ class HybridRetriever:
             meta = self.chunk_meta.get(cid)
             if not meta or (meta["source_id"] in sources and len(out) >= 2):
                 continue
-            dense_score = next((float(hit.score) for hit in dense if str(hit.id) == cid), 0.0)
-            out.append(Citation(source_id=meta["source_id"], text=meta["text"], score=round(dense_score, 4), strategy=meta["strategy"]))
+            out.append(Citation(source_id=meta["source_id"], text=meta["text"], score=round(dense_scores.get(cid, 0.0), 4), strategy=meta["strategy"]))
             sources.add(meta["source_id"])
             if len(out) == limit:
                 break

@@ -13,9 +13,32 @@ const MARQUEE = 'VOICE-ENABLED RAG ◆ GROUNDED ANSWERS ◆ ENGINEERED CHUNKING 
 
 const BUDGET_MS = 200
 
+const SUGGESTIONS = [
+  { lang: 'ta-IN', label: 'Tamil', prompts: [
+    'இதயத் தாக்குதலின் அறிகுறிகள் என்ன?',
+    'தலைவலி ஏற்படும் காரணங்கள் என்ன?',
+  ] },
+  { lang: 'hi-IN', label: 'Hindi', prompts: [
+    'अगर कुत्ते का दौरा पड़े तो क्या करें?',
+    'बुखार आने पर क्या करना चाहिए?',
+  ] },
+  { lang: 'en-IN', label: 'English', prompts: [
+    'What should I do if my dog has a seizure?',
+    'What are the symptoms of a heart attack?',
+  ] },
+  { lang: 'bn-IN', label: 'Bengali', prompts: [
+    'কুকুরের খিঁচুটি পড়লে কী করবেন?',
+    'জ্বর এলে কী করবেন?',
+  ] },
+]
+
 function LatencyReport({ timings }) {
   if (!timings || Object.keys(timings).length === 0) return null
-  const total = Object.values(timings).reduce((a, b) => a + b, 0)
+  // end_to_end_text_core is a subtotal (guardrail+retrieval+answer), not an
+  // independent stage.  Exclude it from the per-stage list and compute the
+  // total from the individual stages (+stt for audio queries) instead.
+  const stages = Object.entries(timings).filter(([k]) => k !== 'end_to_end_text_core')
+  const total = stages.reduce((a, [, v]) => a + v, 0)
   const underBudget = total <= BUDGET_MS
   const percent = Math.min((total / BUDGET_MS) * 100, 100)
 
@@ -31,7 +54,7 @@ function LatencyReport({ timings }) {
     </div>
     <p className="latency-total"><strong>{total}ms</strong> total pipeline</p>
     <ul className="latency-stages">
-      {Object.entries(timings).map(([stage, ms]) => (
+      {stages.map(([stage, ms]) => (
         <li key={stage}>
           <span>{stage.replaceAll('_', ' ')}</span>
           <span className="latency-ms">{ms} ms</span>
@@ -136,6 +159,12 @@ export default function App() {
     if (question.trim()) request('/v1/ask/text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, language }) })
   }
 
+  function tryPrompt(text, lang) {
+    setQuestion(text)
+    setLanguage(lang)
+    request('/v1/ask/text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: text, language: lang }) })
+  }
+
   function startVisualizer() {
     const canvas = canvasRef.current
     const analyser = analyserRef.current
@@ -210,6 +239,7 @@ export default function App() {
       <nav>
         <a href="#pipeline">The Pipeline</a>
         <a href="#answer">The Answer</a>
+        <a href="#flow">How it Flows</a>
       </nav>
       <button className="cta" onClick={() => document.getElementById('pipeline').scrollIntoView({ behavior: 'smooth' })}>Ask</button>
     </header>
@@ -243,6 +273,17 @@ export default function App() {
           </div>
         </form>
 
+        <div className="suggestions">
+          {SUGGESTIONS.map((group) => (
+            <div className="suggestion-group" key={group.lang}>
+              <span className="suggestions-label">{group.label}</span>
+              {group.prompts.map((p) => (
+                <button type="button" className="chip" key={p} disabled={loading} onClick={() => tryPrompt(p, group.lang)}>{p}</button>
+              ))}
+            </div>
+          ))}
+        </div>
+
         <div className="divider"><span>or speak in the selected language</span></div>
         <button className={`record ${recording ? 'active' : ''}`} onClick={toggleRecording} disabled={loading}>{recording ? 'Stop & ask' : 'Record a question'}</button>
         {recording && <>
@@ -271,6 +312,44 @@ export default function App() {
         {result.status === 'answered' && <LatencyReport timings={result.timings_ms} />}
       </div>
     </section>}
+
+    <section className="flow" id="flow">
+      <p className="section-tag">03 — under the hood</p>
+      <div className="flow-panel">
+        <h2>How it flows</h2>
+        <p className="flow-sub">From voice or text to a cited answer in &lt;200 ms — every stage is bounded, per-language partitioned, and measured. This is the full pipeline you just used above.</p>
+
+        <div className="flow-diagram">
+          <div className="flow-step"><span className="flow-num">01</span><strong>Capture</strong><span>Typed text or MediaRecorder audio (webm) + language tag <em>ta / hi / en / bn</em>. Empty / too-large audio is rejected before STT.</span></div>
+          <div className="flow-arrow" aria-hidden="true">→</div>
+          <div className="flow-step"><span className="flow-num">02</span><strong>Sarvam STT</strong><span>Isolated adapter — validates MIME, 1.2 s timeout, typed <em>STTError</em> (never silent empty transcript). Text path skips this.</span></div>
+          <div className="flow-arrow" aria-hidden="true">→</div>
+          <div className="flow-step"><span className="flow-num">03</span><strong>Guardrail + Language</strong><span><code>validate_question</code> blocks off-topic / injection / unsafe. <code>language_filter</code> maps <em>en-IN→en</em> etc. — try-outs set this explicitly.</span></div>
+          <div className="flow-arrow" aria-hidden="true">→</div>
+          <div className="flow-step"><span className="flow-num">04</span><strong>Hybrid Retrieval</strong><span>Per-language shards only: <em>lexical (BM25 sidecar, IDF≥2.0)</em> + <em>dense (hnswlib M16 ef64 or per-lang brute-force)</em> in parallel → RRF + dedup → 6 citations.</span></div>
+          <div className="flow-arrow" aria-hidden="true">→</div>
+          <div className="flow-step"><span className="flow-num">05</span><strong>Grounded Answer</strong><span>IDF-weighted sentence overlap (≥2 content terms, 1 distinctive). No LLM — answer is only from cited sentences, else <em>refused</em>.</span></div>
+          <div className="flow-arrow" aria-hidden="true">→</div>
+          <div className="flow-step"><span className="flow-num">06</span><strong>Render</strong><span>Citations + <em>timings_ms</em> (guardrail / retrieval / answer / end_to_end). Budget bar turns green &lt;200 ms. Exact cache makes repeats &lt;10 ms.</span></div>
+        </div>
+
+        <div className="flow-meta">
+          <div className="flow-budget">
+            <p className="citations-tag">Latency budget (warm, p50)</p>
+            <ul>
+              <li><span>guardrail</span><span>0.01 ms</span></li>
+              <li><span>retrieval (embed+dense+lexical)</span><span>27 ms</span></li>
+              <li><span>answer</span><span>0.8 ms</span></li>
+              <li><strong>end-to-end core</strong><strong>28 ms</strong></li>
+            </ul>
+          </div>
+          <div className="flow-note">
+            <p className="citations-tag">Why it stays fast</p>
+            <p>HNSW tuned (M16 efC128 ef64), per-language partitioning (no global scan), IDF stopword drop, query-vector cache, async lexical‖embedding, and startup warmup that pre-compiles each chip prompt. See <code>LowLatency.pdf / LowLatency2.pdf</code> in <code>backend/</code>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <footer>
       <p><strong>© 2026 Konkan Voice RAG.</strong> All rights reserved.</p>

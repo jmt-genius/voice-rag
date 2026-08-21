@@ -12,7 +12,7 @@ from .answering import grounded_answer
 from .config import language_filter, settings
 from .contracts import AskResponse, TextQuestion
 from .guardrails import validate_question
-from .retrieval import HybridRetriever
+from .retrieval import HybridRetriever, terms
 from .stt import STTError, SarvamSTT
 
 
@@ -26,12 +26,20 @@ async def lifespan(app: FastAPI):
     # latency spike on the very first query). Warm the embedder directly and
     # page the graph with one dense search so no stage is cold on request #1.
     try:
-        # Warm both batch shapes (batch>1 and batch=1) so the ONNX runtime's
-        # graph optimization is cached before request #1, keeping the first
-        # real query's embedding cost in the warm ~30ms band, not ~90ms.
-        list(app.state.retriever.embedder.embed(["warmup one", "warmup two"]))
-        list(app.state.retriever.embedder.embed(["warmup single query shape"]))
-        app.state.retriever.search("warmup query to preload embedding model and vector index", limit=1)
+        # Pre-warm the embedding model ONNX session and HNSW graphs
+        warm_queries = [
+            "What should I do if my dog has a seizure?",
+            "What are the symptoms of a heart attack?",
+            "अगर कुत्ते का दौरा पड़े तो क्या करें?",
+            "बुखार आने पर क्या करना चाहिए?",
+            "இதயத் தாக்குதலின் அறிகுறிகள் என்ன?",
+            "தலைவலி ஏற்படும் காரணங்கள் என்ன?",
+            "কুকুরের খিঁচুটি পড়লে কী করবেন?",
+            "জ্বর এলে কী করবেন?",
+        ]
+        for q in warm_queries:
+            list(app.state.retriever.embedder.query_embed([q]))
+        app.state.retriever.search("warmup query", limit=1, language="en")
     except Exception:
         pass
     app.state.stt = SarvamSTT(cfg.sarvam_api_key, cfg.sarvam_stt_url, cfg.stt_timeout_ms)
@@ -41,29 +49,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Konkan Voice RAG", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
 
-# Hierarchical semantic caching (LowLatency2.pdf, sec. 4): identical or
-# normalized queries bypass retrieval + extraction entirely, returning in sub-10ms.
-_CACHE: "OrderedDict[str, AskResponse]" = OrderedDict()
-_CACHE_MAX = 500
-
-
-def _cache_key(question: str, language: str | None) -> str:
-    return f"{language or ''}::{' '.join(question.lower().split())}"
-
-
 def run_text(question: str, trace_id: str, language: str | None = None) -> AskResponse:
-    key = _cache_key(question, language)
-    cached = _CACHE.get(key)
-    if cached is not None:
-        _CACHE.move_to_end(key)
-        return cached.copy(update={"trace_id": trace_id})
     started = time.perf_counter()
     rejection = validate_question(question)
     guard_ms = (time.perf_counter() - started) * 1000
@@ -77,13 +70,8 @@ def run_text(question: str, trace_id: str, language: str | None = None) -> AskRe
     answer_ms = (time.perf_counter() - answer_started) * 1000
     total = (time.perf_counter() - started) * 1000
     if not answer:
-        resp = AskResponse(status="refused", reason=reason, timings_ms={"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(total, 2)}, trace_id=trace_id)
-    else:
-        resp = AskResponse(status="answered", answer=answer, citations=used, timings_ms={"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(total, 2)}, trace_id=trace_id)
-    _CACHE[key] = resp
-    if len(_CACHE) > _CACHE_MAX:
-        _CACHE.popitem(last=False)
-    return resp
+        return AskResponse(status="refused", reason=reason, timings_ms={"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(total, 2)}, trace_id=trace_id)
+    return AskResponse(status="answered", answer=answer, citations=used, timings_ms={"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(total, 2)}, trace_id=trace_id)
 
 
 @app.get("/health")
@@ -94,6 +82,100 @@ def health() -> dict:
 @app.post("/v1/ask/text", response_model=AskResponse)
 def ask_text(request: TextQuestion) -> AskResponse:
     return run_text(request.question, str(uuid4()), language_filter(request.language))
+
+
+@app.post("/v1/debug/profile")
+def debug_profile(request: TextQuestion) -> dict:
+    import time as _t
+    from collections import defaultdict
+    r = app.state.retriever
+    q, lang = request.question, request.language
+    _s = _t.perf_counter()
+    vector = next(r.embedder.query_embed([q]))
+    embed_ms = (_t.perf_counter() - _s) * 1000
+    _s = _t.perf_counter()
+    dense = r.client.search(r.cfg.collection_name, query_vector=vector.tolist(), limit=40)
+    dense_ms = (_t.perf_counter() - _s) * 1000
+    _s = _t.perf_counter()
+    lexical_scores: dict[str, int] = defaultdict(int)
+    postings = 0
+    for term in terms(q):
+        for cid in r.lexical.get(term, ()):
+            postings += 1
+            if lang and r.chunk_meta.get(cid, {}).get("language") != lang:
+                continue
+            lexical_scores[cid] += 1
+    lexical_ms = (_t.perf_counter() - _s) * 1000
+    _s = _t.perf_counter()
+    cits = r.search(q, language=lang if lang in {"en", "hi", "ta", "bn"} else language_filter(lang))
+    full_search_ms = (_t.perf_counter() - _s) * 1000
+    return {"embed_ms": round(embed_ms, 2), "dense_ms": round(dense_ms, 2), "lexical_ms": round(lexical_ms, 2), "lexical_postings_scanned": postings, "full_search_ms": round(full_search_ms, 2)}
+
+
+@app.post("/v1/debug/diagnose")
+def debug_diagnose(request: TextQuestion) -> dict:
+    import time as _t
+    from collections import defaultdict
+    r = app.state.retriever
+    q = request.question
+    lang = language_filter(request.language) if request.language else None
+    info = {
+        "client_type": type(r.client).__name__,
+        "per_lang_indexes": list(r._per_lang_index.keys()),
+        "per_lang_sizes": {k: len(v) for k, v in r._per_lang_ids.items()},
+        "vec_cache_size": len(r._query_vec_cache),
+        "chunk_meta_size": len(r.chunk_meta),
+        "resolved_language": lang,
+    }
+    # Detailed per-stage timing for a fresh search
+    _s = _t.perf_counter()
+    vec = r._get_query_vector(q)
+    embed_ms = (_t.perf_counter() - _s) * 1000
+    # Lexical
+    _s = _t.perf_counter()
+    lex_scores = defaultdict(int)
+    shard = r.lexical_per_lang.get(lang, r.lexical) if lang else r.lexical
+    postings = 0
+    for term in terms(q):
+        idf = r.idf.get(term, getattr(r, 'idf_max', 99))
+        if idf < 2.0:
+            continue
+        for cid in shard.get(term, ()):
+            postings += 1
+            lex_scores[cid] += 1
+    lexical_ms = (_t.perf_counter() - _s) * 1000
+    # Dense
+    _s = _t.perf_counter()
+    limit = r.cfg.top_k
+    dense_k = limit * 3
+    if lang and lang in r._per_lang_index:
+        import numpy as np
+        query = np.asarray(vec, dtype=np.float32)
+        norm = np.linalg.norm(query)
+        if norm > 0:
+            query = query / norm
+        lang_idx = r._per_lang_index[lang]
+        lang_ids = r._per_lang_ids[lang]
+        k = min(dense_k, len(lang_ids))
+        labels, scores = lang_idx.knn_query(query.reshape(1, -1), k=k)
+        dense_path = f"per_lang_hnsw({lang}, k={k})"
+    else:
+        r.client.search(r.cfg.collection_name, query_vector=vec.tolist(), limit=dense_k)
+        dense_path = f"global_client({type(r.client).__name__}, k={dense_k})"
+    dense_ms = (_t.perf_counter() - _s) * 1000
+    # Full search
+    _s = _t.perf_counter()
+    cits = r.search(q, language=lang)
+    full_ms = (_t.perf_counter() - _s) * 1000
+    info["timings"] = {
+        "embed_ms": round(embed_ms, 2),
+        "lexical_ms": round(lexical_ms, 2),
+        "lexical_postings": postings,
+        "dense_ms": round(dense_ms, 2),
+        "dense_path": dense_path,
+        "full_search_ms": round(full_ms, 2),
+    }
+    return info
 
 
 @app.post("/v1/ask/audio", response_model=AskResponse)
