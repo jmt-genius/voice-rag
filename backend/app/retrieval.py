@@ -9,14 +9,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-# Low-latency tuning (LowLatency2.pdf, sec. 3): unmanaged thread spinning by the
-# embedding runtime saturates memory bandwidth and jitters CPU inference. Pin a
-# bounded pool and disable idle spinning before the ONNX session is built.
-os.environ.setdefault("OMP_NUM_THREADS", str(os.cpu_count() or 4))
+# Low-latency tuning: limit thread pools in containers to prevent memory spikes
+os.environ.setdefault("OMP_NUM_THREADS", os.getenv("OMP_NUM_THREADS", "1"))
 os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
-os.environ.setdefault("ONNX_NUM_THREADS", str(os.cpu_count() or 4))
+os.environ.setdefault("ONNX_NUM_THREADS", os.getenv("ONNX_NUM_THREADS", "1"))
 os.environ.setdefault("KMP_BLOCKTIME", "0")
 os.environ.setdefault("KMP_AFFINITY", "granularity=fine,compact,1,0")
+os.environ.setdefault("MALLOC_ARENA_MAX", "2")
 
 import numpy as np
 from fastembed import TextEmbedding
@@ -92,7 +91,9 @@ class HybridRetriever:
         # If Supabase is configured, we don't need local HNSW/Qdrant for dense
         if self.supabase is not None:
             self.client = None
-        self.embedder = TextEmbedding(model_name=cfg.embedding_model, threads=min(os.cpu_count() or 4, 4))
+        threads_count = int(os.getenv("EMBEDDING_THREADS", "1"))
+        self.embedder = TextEmbedding(model_name=cfg.embedding_model, threads=threads_count)
+        import gc; gc.collect()
         self.lexical: dict[str, list[str]] = {}
         self.lexical_per_lang: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
         self.chunk_meta: dict[str, dict] = {}

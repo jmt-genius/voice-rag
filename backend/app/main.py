@@ -26,20 +26,10 @@ async def lifespan(app: FastAPI):
     # latency spike on the very first query). Warm the embedder directly and
     # page the graph with one dense search so no stage is cold on request #1.
     try:
-        # Pre-warm the embedding model ONNX session and HNSW graphs
-        warm_queries = [
-            "What should I do if my dog has a seizure?",
-            "What are the symptoms of a heart attack?",
-            "अगर कुत्ते का दौरा पड़े तो क्या करें?",
-            "बुखार आने पर क्या करना चाहिए?",
-            "இதயத் தாக்குதலின் அறிகுறிகள் என்ன?",
-            "தலைவலி ஏற்படும் காரணங்கள் என்ன?",
-            "কুকুরের খিঁচুটি পড়লে কী করবেন?",
-            "জ্বর এলে কী করবেন?",
-        ]
-        for q in warm_queries:
-            list(app.state.retriever.embedder.query_embed([q]))
-        app.state.retriever.search("warmup query", limit=1, language="en")
+        # Warm up the embedder with a single query to initialize the ONNX session
+        list(app.state.retriever.embedder.query_embed(["warmup"]))
+        app.state.retriever.search("warmup", limit=1, language="en")
+        import gc; gc.collect()
     except Exception:
         pass
     app.state.stt = SarvamSTT(cfg.sarvam_api_key, cfg.sarvam_stt_url, cfg.stt_timeout_ms)
