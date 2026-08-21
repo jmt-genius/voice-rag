@@ -98,18 +98,22 @@ class HybridRetriever:
         self.lexical_per_lang: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
         self.chunk_meta: dict[str, dict] = {}
         self.idf: dict[str, float] = {}
+        self.idf_max: float = 1.0
         self._query_vec_cache: OrderedDict[str, np.ndarray] = OrderedDict()
         self._query_vec_cache_max = 512
         self._per_lang_index: dict[str, object] = {}
         self._per_lang_ids: dict[str, list[str]] = {}
-        self._load_sidecar()
-        self._load_fast_index()
+        # In Supabase mode: skip loading 94k rows into RAM — just set sentinel
+        # so search() knows to proceed. chunk_meta is populated on-demand per result.
+        if self.supabase is not None:
+            self.chunk_meta["__supabase__"] = {}
+        else:
+            self._load_sidecar()
+            self._load_fast_index()
 
     def _load_fast_index(self) -> None:
         # Cloud/Supabase mode: keep container under 512 MB — skip 500 MB HNSW load
         if self.supabase is not None or self.cfg.qdrant_host:
-            return
-        if self.cfg.qdrant_host:
             return
         index_dir = Path("data/hnsw")
         index_path = index_dir / f"{self.cfg.collection_name}.hnsw"
@@ -171,34 +175,6 @@ class HybridRetriever:
 
     def _load_sidecar(self) -> None:
         path = self.root / "chunks.jsonl"
-        # Supabase mode on Render/Vercel has no local sidecar — build lexical from Supabase table
-        if not path.exists() and self.supabase is not None:
-            try:
-                # Fetch all chunks' metadata for lexical (94k rows, ~100 MB text)
-                offset = 0
-                batch = 1000
-                index: dict[str, list[str]] = defaultdict(list)
-                while True:
-                    res = self.supabase.table("chunks").select("id,text,language,source_id,strategy").range(offset, offset+batch-1).execute()
-                    if not res.data:
-                        break
-                    for item in res.data:
-                        self.chunk_meta[item["id"]] = item
-                        lang = item.get("language") or "en"
-                        for term in terms(item["text"]):
-                            index[term].append(item["id"])
-                            self.lexical_per_lang[lang][term].append(item["id"])
-                    if len(res.data) < batch:
-                        break
-                    offset += batch
-                self.lexical = dict(index)
-                self.lexical_per_lang = {k: dict(v) for k, v in self.lexical_per_lang.items()}
-                total = len(self.chunk_meta)
-                self.idf = {term: math.log((total + 1) / (len(ids) + 1)) + 1.0 for term, ids in self.lexical.items()} if self.lexical else {}
-                self.idf_max = math.log(total + 1) + 1.0 if total else 1.0
-                return
-            except Exception:
-                return
         if not path.exists():
             return
         index: dict[str, list[str]] = defaultdict(list)
@@ -262,17 +238,17 @@ class HybridRetriever:
         if not self.chunk_meta:
             return []
         limit = limit or self.cfg.top_k
-        # Async concurrent pipeline (LowLatency2.pdf sec 9): lexical scoring does
-        # not need the query vector, so run it in parallel with embedding.
+
+        # In Supabase mode: fetch dense results from pgvector, then do lightweight
+        # lexical re-ranking only on those rows (no 94k-row prefetch).
+        if self.supabase is not None:
+            return self._search_supabase(question, limit, language)
+
+        # Local HNSW / Qdrant path — lexical index is pre-built from sidecar.
         lexical_scores: dict[str, int] = defaultdict(int)
 
         def _lexical():
-            # Per-language lexical shards (LowLatency2.pdf sec 10: pre-filtered
-            # graph navigation) avoid scanning global postings then discarding.
             shard = self.lexical_per_lang.get(language, self.lexical) if language else self.lexical
-            # IDF-aware filtering (CSRv2 ultra-sparse intuition): drop
-            # low-IDF stopwords that blow up postings (e.g., "the" -> 10k+ ids)
-            # and add no discriminative power.
             for term in terms(question):
                 idf = self.idf.get(term, self.idf_max)
                 if idf < 2.0:
@@ -285,20 +261,9 @@ class HybridRetriever:
         lex_thread.start()
         vector = self._get_query_vector(question)
         lex_thread.join()
-        # Dense search — Supabase pgvector (Mumbai, free) preferred, else
-        # per-language HNSW (~1-3ms) or Qdrant Cloud/local.
+
         dense_k = limit * 3
-        if self.supabase is not None:
-            try:
-                res = self.supabase.rpc("match_chunks", {
-                    "query_embedding": vector.tolist(),
-                    "match_language": language,
-                    "match_count": dense_k
-                }).execute()
-                dense = [FastHit(id=row["id"], score=float(row.get("score", 0))) for row in (res.data or [])]
-            except Exception:
-                dense = []
-        elif language and language in self._per_lang_index:
+        if language and language in self._per_lang_index:
             query = np.asarray(vector, dtype=np.float32)
             norm = np.linalg.norm(query)
             if norm > 0:
@@ -310,6 +275,7 @@ class HybridRetriever:
             dense = [FastHit(id=lang_ids[i], score=float(s)) for i, s in zip(labels[0], scores[0])]
         else:
             dense = self.client.search(self.cfg.collection_name, query_vector=vector.tolist(), limit=dense_k) if self.client else []
+
         dense_rank = {}
         dense_scores: dict[str, float] = {}
         for rank, hit in enumerate(dense, 1):
@@ -321,7 +287,6 @@ class HybridRetriever:
             dense_scores[hid] = float(hit.score)
         lexical_rank = {cid: rank for rank, (cid, _) in enumerate(sorted(lexical_scores.items(), key=lambda x: -x[1]), 1)}
         candidates = set(dense_rank) | set(list(lexical_rank)[:limit * 8])
-        # Reciprocal Rank Fusion, then remove siblings from the same source when possible.
         fused = sorted(candidates, key=lambda cid: 1 / (60 + dense_rank.get(cid, 10_000)) + 1 / (60 + lexical_rank.get(cid, 10_000)), reverse=True)
         out, sources = [], set()
         for cid in fused:
@@ -330,6 +295,65 @@ class HybridRetriever:
                 continue
             out.append(Citation(source_id=meta["source_id"], text=meta["text"], score=round(dense_scores.get(cid, 0.0), 4), strategy=meta["strategy"]))
             sources.add(meta["source_id"])
+            if len(out) == limit:
+                break
+        return out
+
+    def _search_supabase(self, question: str, limit: int, language: str | None) -> list[Citation]:
+        """Supabase mode: dense via pgvector match_chunks RPC + lightweight in-process
+        lexical re-ranking on the small result set. No 94k-row prefetch needed."""
+        vector = self._get_query_vector(question)
+        dense_k = limit * 3
+        try:
+            res = self.supabase.rpc("match_chunks", {
+                "query_embedding": vector.tolist(),
+                "match_language": language,
+                "match_count": dense_k
+            }).execute()
+            rows = res.data or []
+        except Exception:
+            rows = []
+        if not rows:
+            return []
+
+        # Lightweight lexical scoring over just the returned rows (not 94k rows)
+        query_terms = terms(question)
+        dense_rank: dict[str, int] = {}
+        dense_scores: dict[str, float] = {}
+        lex_scores: dict[str, int] = defaultdict(int)
+        row_meta: dict[str, dict] = {}
+
+        for rank, row in enumerate(rows, 1):
+            rid = str(row["id"])
+            dense_rank[rid] = rank
+            dense_scores[rid] = float(row.get("score", 0))
+            row_meta[rid] = row
+            # Score lexical overlap on just this row's text
+            chunk_terms = terms(row.get("text", ""))
+            lex_scores[rid] = len(query_terms & chunk_terms)
+
+        lexical_rank = {cid: rank for rank, (cid, _) in enumerate(sorted(lex_scores.items(), key=lambda x: -x[1]), 1)}
+        candidates = list(dense_rank.keys())
+        fused = sorted(
+            candidates,
+            key=lambda cid: 1 / (60 + dense_rank.get(cid, 10_000)) + 1 / (60 + lexical_rank.get(cid, 10_000)),
+            reverse=True,
+        )
+        out, sources = [], set()
+        for cid in fused:
+            row = row_meta.get(cid)
+            if not row:
+                continue
+            sid = row.get("source_id", cid)
+            if sid in sources and len(out) >= 2:
+                continue
+            out.append(Citation(
+                source_id=sid,
+                text=row.get("text", ""),
+                score=round(dense_scores.get(cid, 0.0), 4),
+                strategy=row.get("strategy", ""),
+            ))
+            sources.add(sid)
             if len(out) == limit:
                 break
         return out

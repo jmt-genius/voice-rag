@@ -9,6 +9,10 @@ COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir -r requirements.txt
 
+# Bake the ONNX embedding model into the image so startup needs no download.
+ENV FASTEMBED_CACHE_DIR=/service/.cache/fastembed
+RUN python -c "from fastembed import TextEmbedding; list(TextEmbedding('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2').embed(['warmup']))"
+
 COPY backend/app ./app
 COPY backend/start.sh ./start.sh
 RUN chmod +x ./start.sh && mkdir -p data/qdrant_remote
