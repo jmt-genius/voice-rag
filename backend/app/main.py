@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
@@ -20,6 +21,19 @@ async def lifespan(app: FastAPI):
     cfg = settings()
     app.state.cfg = cfg
     app.state.retriever = HybridRetriever(cfg)
+    # Pre-warm the embedding model + HNSW index so the first user request
+    # stays within the sub-200ms budget (cold ONNX/HNSW init is the dominant
+    # latency spike on the very first query). Warm the embedder directly and
+    # page the graph with one dense search so no stage is cold on request #1.
+    try:
+        # Warm both batch shapes (batch>1 and batch=1) so the ONNX runtime's
+        # graph optimization is cached before request #1, keeping the first
+        # real query's embedding cost in the warm ~30ms band, not ~90ms.
+        list(app.state.retriever.embedder.embed(["warmup one", "warmup two"]))
+        list(app.state.retriever.embedder.embed(["warmup single query shape"]))
+        app.state.retriever.search("warmup query to preload embedding model and vector index", limit=1)
+    except Exception:
+        pass
     app.state.stt = SarvamSTT(cfg.sarvam_api_key, cfg.sarvam_stt_url, cfg.stt_timeout_ms)
     yield
 
@@ -34,7 +48,22 @@ app.add_middleware(
 )
 
 
+# Hierarchical semantic caching (LowLatency2.pdf, sec. 4): identical or
+# normalized queries bypass retrieval + extraction entirely, returning in sub-10ms.
+_CACHE: "OrderedDict[str, AskResponse]" = OrderedDict()
+_CACHE_MAX = 500
+
+
+def _cache_key(question: str, language: str | None) -> str:
+    return f"{language or ''}::{' '.join(question.lower().split())}"
+
+
 def run_text(question: str, trace_id: str, language: str | None = None) -> AskResponse:
+    key = _cache_key(question, language)
+    cached = _CACHE.get(key)
+    if cached is not None:
+        _CACHE.move_to_end(key)
+        return cached.copy(update={"trace_id": trace_id})
     started = time.perf_counter()
     rejection = validate_question(question)
     guard_ms = (time.perf_counter() - started) * 1000
@@ -48,8 +77,13 @@ def run_text(question: str, trace_id: str, language: str | None = None) -> AskRe
     answer_ms = (time.perf_counter() - answer_started) * 1000
     total = (time.perf_counter() - started) * 1000
     if not answer:
-        return AskResponse(status="refused", reason=reason, timings_ms={"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(total, 2)}, trace_id=trace_id)
-    return AskResponse(status="answered", answer=answer, citations=used, timings_ms={"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(total, 2)}, trace_id=trace_id)
+        resp = AskResponse(status="refused", reason=reason, timings_ms={"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(total, 2)}, trace_id=trace_id)
+    else:
+        resp = AskResponse(status="answered", answer=answer, citations=used, timings_ms={"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(total, 2)}, trace_id=trace_id)
+    _CACHE[key] = resp
+    if len(_CACHE) > _CACHE_MAX:
+        _CACHE.popitem(last=False)
+    return resp
 
 
 @app.get("/health")

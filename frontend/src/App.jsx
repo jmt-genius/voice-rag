@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
 
 const LANGUAGES = [
   { code: 'ta-IN', name: 'Tamil', tag: 'TA' },
@@ -268,7 +268,7 @@ export default function App() {
             <small><span className="source-badge">Source {citation.source_id}</span> {citation.strategy} · score {citation.score}</small>
           </article>)}
         </div>}
-        <LatencyReport timings={result.timings_ms} />
+        {result.status === 'answered' && <LatencyReport timings={result.timings_ms} />}
       </div>
     </section>}
 

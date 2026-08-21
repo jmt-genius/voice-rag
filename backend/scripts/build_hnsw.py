@@ -28,7 +28,7 @@ from app.retrieval import HybridRetriever
 
 BATCH = 256
 M = 16
-EF_CONSTRUCTION = 100
+EF_CONSTRUCTION = 128
 EF_SEARCH = 64
 DIM = 384
 

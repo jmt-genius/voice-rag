@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+
+# Low-latency tuning (LowLatency2.pdf, sec. 3): unmanaged thread spinning by the
+# embedding runtime saturates memory bandwidth and jitters CPU inference. Pin a
+# bounded pool and disable idle spinning before the ONNX session is built.
+os.environ.setdefault("OMP_NUM_THREADS", str(min(os.cpu_count() or 4, 4)))
+os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+os.environ.setdefault("ONNX_NUM_THREADS", str(min(os.cpu_count() or 4, 4)))
 
 import numpy as np
 from fastembed import TextEmbedding
@@ -137,7 +145,12 @@ class HybridRetriever:
         # A language-scoped search must see a larger dense pool: the global
         # top-k can be dominated by other languages, so filter after a wider
         # search instead of shrinking recall to the language's global rank.
-        dense = self.client.search(self.cfg.collection_name, query_vector=vector.tolist(), limit=(limit * 25 if language else limit * 3))
+        # The pool is still bounded (per the ultra-low-latency HNSW guidance:
+        # keep candidate depth low so query latency stays in single-digit-to-
+        # low-double-digit ms) rather than the over-expanded depth that spikes
+        # tail latency.
+        dense_k = limit * 10 if language else limit * 3
+        dense = self.client.search(self.cfg.collection_name, query_vector=vector.tolist(), limit=dense_k)
         # Lexical candidates make named entities and exact spoken phrases recoverable.
         lexical_scores: dict[str, int] = defaultdict(int)
         for term in terms(question):
