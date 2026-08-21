@@ -47,11 +47,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Konkan Voice RAG", version="1.0.0", lifespan=lifespan)
+# Render frontend will be at https://<name>.onrender.com — allow all origins
+# in production (no credentials) or set ALLOWED_ORIGINS env var.
+import os as _os
+_allowed = _os.getenv("ALLOWED_ORIGINS", "")
+_allow_origins = [o.strip() for o in _allowed.split(",") if o.strip()] if _allowed else ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=_allow_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 

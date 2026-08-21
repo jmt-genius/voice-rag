@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     qdrant_path: str = "data/qdrant"
     qdrant_host: str | None = None
     qdrant_port: int = 6333
+    qdrant_api_key: str | None = None
+    supabase_url: str | None = None
+    supabase_service_key: str | None = None
+    supabase_publishable_key: str | None = None
     collection_name: str = "msmarco_xi"
     # Supported by FastEmbed 0.3.6; covers the Indic languages in MSMARCO-XI.
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"

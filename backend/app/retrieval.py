@@ -70,29 +70,46 @@ class HybridRetriever:
     def __init__(self, cfg: Settings):
         self.cfg = cfg
         self.root = Path(cfg.qdrant_path)
+        # Supabase pgvector (free, Mumbai) — preferred when configured
+        self.supabase = None
+        if getattr(cfg, "supabase_url", None) and getattr(cfg, "supabase_service_key", None):
+            try:
+                from supabase import create_client as _create
+                self.supabase = _create(cfg.supabase_url, cfg.supabase_service_key)
+            except Exception:
+                self.supabase = None
         if cfg.qdrant_host:
-            self.client = QdrantClient(host=cfg.qdrant_host, port=cfg.qdrant_port)
+            kwargs = {"host": cfg.qdrant_host, "port": cfg.qdrant_port}
+            if cfg.qdrant_api_key:
+                kwargs["api_key"] = cfg.qdrant_api_key
+                kwargs["https"] = True
+            self.client = QdrantClient(**kwargs)
         else:
             try:
                 self.client = QdrantClient(path=str(self.root))
             except Exception:
                 self.client = None
+        # If Supabase is configured, we don't need local HNSW/Qdrant for dense
+        if self.supabase is not None:
+            self.client = None
         self.embedder = TextEmbedding(model_name=cfg.embedding_model, threads=min(os.cpu_count() or 4, 4))
         self.lexical: dict[str, list[str]] = {}
         self.lexical_per_lang: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
         self.chunk_meta: dict[str, dict] = {}
         self.idf: dict[str, float] = {}
-        # Tiered embedding cache (LowLatency2.pdf sec 4 & 9): query vector reuse
-        # avoids re-encoding identical chip prompts (~30-75ms saved).
         self._query_vec_cache: OrderedDict[str, np.ndarray] = OrderedDict()
         self._query_vec_cache_max = 512
-        # Per-language HNSW indexes for fast language-scoped dense search
-        self._per_lang_index: dict[str, object] = {}   # lang -> hnswlib.Index
-        self._per_lang_ids: dict[str, list[str]] = {}   # lang -> list of chunk ids
+        self._per_lang_index: dict[str, object] = {}
+        self._per_lang_ids: dict[str, list[str]] = {}
         self._load_sidecar()
         self._load_fast_index()
 
     def _load_fast_index(self) -> None:
+        # Cloud/Supabase mode: keep container under 512 MB — skip 500 MB HNSW load
+        if self.supabase is not None or self.cfg.qdrant_host:
+            return
+        if self.cfg.qdrant_host:
+            return
         index_dir = Path("data/hnsw")
         index_path = index_dir / f"{self.cfg.collection_name}.hnsw"
         ids_path = index_dir / f"{self.cfg.collection_name}.ids.json"
@@ -239,11 +256,20 @@ class HybridRetriever:
         lex_thread.start()
         vector = self._get_query_vector(question)
         lex_thread.join()
-        # Per-language HNSW search (LowLatency2.pdf sec 7/10):
-        # when a language is specified, search that language's HNSW graph
-        # (~1-3ms) instead of brute-force numpy matmul (~120ms).
+        # Dense search — Supabase pgvector (Mumbai, free) preferred, else
+        # per-language HNSW (~1-3ms) or Qdrant Cloud/local.
         dense_k = limit * 3
-        if language and language in self._per_lang_index:
+        if self.supabase is not None:
+            try:
+                res = self.supabase.rpc("match_chunks", {
+                    "query_embedding": vector.tolist(),
+                    "match_language": language,
+                    "match_count": dense_k
+                }).execute()
+                dense = [FastHit(id=row["id"], score=float(row.get("score", 0))) for row in (res.data or [])]
+            except Exception:
+                dense = []
+        elif language and language in self._per_lang_index:
             query = np.asarray(vector, dtype=np.float32)
             norm = np.linalg.norm(query)
             if norm > 0:
@@ -254,7 +280,7 @@ class HybridRetriever:
             labels, scores = lang_idx.knn_query(query.reshape(1, -1), k=k)
             dense = [FastHit(id=lang_ids[i], score=float(s)) for i, s in zip(labels[0], scores[0])]
         else:
-            dense = self.client.search(self.cfg.collection_name, query_vector=vector.tolist(), limit=dense_k)
+            dense = self.client.search(self.cfg.collection_name, query_vector=vector.tolist(), limit=dense_k) if self.client else []
         dense_rank = {}
         dense_scores: dict[str, float] = {}
         for rank, hit in enumerate(dense, 1):

@@ -343,6 +343,38 @@ voice-rag/
 
 ---
 
-## 13 — License & credits
+## 13 — Deploy on Render
+
+> Full guide: [`DEPLOY_RENDER.md`](./DEPLOY_RENDER.md)
+
+**Two services — Blueprint `render.yaml` at repo root:**
+
+| Service | Type | Build | Env |
+|---|---|---|---|
+| `konkan-voice-rag-api` | **Web Service (Docker)** `backend/Dockerfile` | `pip install` + `COPY data` | `SARVAM_API_KEY` (secret), `QDRANT_PATH=data/qdrant_remote`, `ALLOWED_ORIGINS=*` |
+| `konkan-voice-rag-ui` | **Static Site** | `cd frontend && npm install && npm run build` → `frontend/dist` | `VITE_API_URL=https://konkan-voice-rag-api.onrender.com` |
+
+**Steps**
+
+```powershell
+# 1) Push — include index (1.1 GB) via Git LFS or set DATA_URL (see DEPLOY_RENDER.md)
+git lfs track "backend/data/**"; git add -f backend/data/qdrant_remote backend/data/hnsw
+git add render.yaml backend/Dockerfile backend/start.sh
+git commit -m "deploy: render blueprint"; git push origin main
+# 2) Render Dashboard → New + → Blueprint → connect repo → Apply
+# 3) Set SARVAM_API_KEY in dashboard → Save
+# 4) After API is live, set UI's VITE_API_URL to https://konkan-voice-rag-api.onrender.com
+```
+
+- **Data is git-ignored** (`backend/data/`). If you don’t push it, set `DATA_URL` (a `data.tar.gz` on HF/R2) — `backend/start.sh` fetches at boot.
+- **Plan:** 150k vectors + ONNX need ~1.2 GB RSS — use **Standard (2 GB)** if Starter OOMs. Free tier sleeps after 15 min (first request ~30 s warmup).
+- **CORS:** `ALLOWED_ORIGINS=*` for first deploy, then tighten to `https://konkan-voice-rag-ui.onrender.com`.
+- **Dockerfile** respects Render’s `$PORT` (`CMD ["./start.sh"]`).
+
+See `DEPLOY_RENDER.md` for manual Dashboard steps, LFS vs download options, and troubleshooting.
+
+---
+
+## 14 — License & credits
 
 Built for **HH Goa 2026 · Task #2 · #RAGInGoa** — Konkan Voice RAG. Dataset: AI4Bharat MSMARCO-XI. STT: Sarvam AI.

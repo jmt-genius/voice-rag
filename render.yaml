@@ -1,0 +1,47 @@
+# Render Blueprint — Konkan Voice RAG
+# Deploys: 1) FastAPI backend (Docker) + 2) Vite frontend (Static Site)
+# Docs: https://render.com/docs/blueprint-spec
+# ------------------------------------------------------------
+# 1) Push this repo to GitHub (make data available — see notes below).
+# 2) In Render: New + → Blueprint → connect repo → Apply.
+# 3) Set SARVAM_API_KEY in the dashboard (required for voice).
+# ------------------------------------------------------------
+
+services:
+  # ── Backend — FastAPI + Qdrant embedded + hnswlib HNSW ──
+  - type: web
+    name: konkan-voice-rag-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter            # 512 MB RAM is tight for 150k vectors + ONNX; use Standard (2GB) if OOM
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: 1
+      - key: QDRANT_PATH
+        value: data/qdrant_remote
+      - key: QDRANT_HOST
+        sync: false          # optional: set in Render dashboard if using Qdrant Cloud
+      - key: QDRANT_PORT
+        value: 6333
+      - key: QDRANT_API_KEY
+        sync: false          # optional: set in Render dashboard if using Qdrant Cloud
+      - key: ALLOWED_ORIGINS
+        value: "*"           # tighten to https://konkan-voice-rag-ui.onrender.com after first deploy
+      - key: SARVAM_API_KEY
+        sync: false          # set in Render dashboard → Environment
+      - key: SARVAM_STT_URL
+        value: https://api.sarvam.ai/speech-to-text
+
+  # ── Frontend — Vite React static site ──
+  # If Blueprint rejects `static_site`, create it manually:
+  #   New → Static Site → Build: `cd frontend && npm install && npm run build`
+  #   Publish: `frontend/dist` → Env: VITE_API_URL=https://konkan-voice-rag-api.onrender.com
+  - type: static_site
+    name: konkan-voice-rag-ui
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://konkan-voice-rag-api.onrender.com
