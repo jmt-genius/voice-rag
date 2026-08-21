@@ -1,0 +1,18 @@
+Recovering vectors from leftover storages...
+  recovered 18410 from data/qdrant_quant/msmarco_xi_quant
+  recovered 2253 from data/qdrant_tiny/msmarco_xi
+  recovered 85767 from data\qdrant_remote/msmarco_xi
+  total recovered: 105765
+Recovered vectors cover 105768/150335 chunks; embedding 44567...
+  5120/44567 (420s, 12 chunks/s)
+  10240/44567 (846s, 12 chunks/s)
+  15360/44567 (1267s, 12 chunks/s)
+  20480/44567 (1962s, 10 chunks/s)
+  25600/44567 (2578s, 10 chunks/s)
+  30720/44567 (3153s, 10 chunks/s)
+  35840/44567 (3566s, 10 chunks/s)
+  40960/44567 (3982s, 10 chunks/s)
+  44567/44567 (4270s, 10 chunks/s)
+Embedding done in 4270s
+Building HNSW (M=16, efC=100)...
+Saved data\hnsw\msmarco_xi.hnsw (150335 vectors) and data\hnsw\msmarco_xi.ids.json

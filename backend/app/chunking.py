@@ -92,3 +92,18 @@ def chunk_passage(text: str, source_id: str, language: str = "unknown") -> list[
     chunks += _fixed_windows(words, source_id, language, clean)
     chunks += _semantic_chunks(sentences, source_id, language, clean)
     return list({chunk.id: chunk for chunk in chunks}.values())
+
+
+def indexable_chunks(chunks: list[Chunk]) -> list[Chunk]:
+    """Keep a bounded, diverse representation instead of indexing sibling duplicates.
+
+    Every strategy is produced above for evaluation and experimentation, but a production
+    index keeps a compact parent, two semantic spans, two long overlapping spans, and one
+    short sentence window. This preserves multi-resolution retrieval without multiplying
+    storage by every overlapping sibling.
+    """
+    quota = {"parent_passage": 1, "semantic_topic": 2, "fixed_96_overlap_24": 2, "sentence_window_2": 1}
+    selected: list[Chunk] = []
+    for strategy, maximum in quota.items():
+        selected.extend(sorted((c for c in chunks if c.strategy == strategy), key=lambda c: c.start_word)[:maximum])
+    return selected or chunks[:1]

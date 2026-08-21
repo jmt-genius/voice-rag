@@ -22,3 +22,4 @@ class AskResponse(BaseModel):
 class TextQuestion(BaseModel):
     question: str = Field(min_length=2, max_length=1000)
     language_code: str = Field(default="en-IN", max_length=20)
+    language: str | None = Field(default=None, max_length=20, description="Retrieval filter, e.g. bn-IN")

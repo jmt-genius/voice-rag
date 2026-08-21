@@ -34,10 +34,16 @@ def main() -> None:
     timings: dict[str, list[float]] = {"guardrail": [], "retrieval": [], "answer": [], "end_to_end_text_core": []}
     for _ in range(args.runs):
         for question in questions:
-            start = time.perf_counter(); validate_question(question); timings["guardrail"].append((time.perf_counter() - start) * 1000)
-            start = time.perf_counter(); citations = retriever.search(question); timings["retrieval"].append((time.perf_counter() - start) * 1000)
-            start = time.perf_counter(); grounded_answer(question, citations, cfg.min_relevance); timings["answer"].append((time.perf_counter() - start) * 1000)
-            timings["end_to_end_text_core"].append(sum(x[-1] for x in timings.values() if x))
+            start = time.perf_counter()
+            validate_question(question)
+            timings["guardrail"].append((time.perf_counter() - start) * 1000)
+            start = time.perf_counter()
+            citations = retriever.search(question)
+            timings["retrieval"].append((time.perf_counter() - start) * 1000)
+            start = time.perf_counter()
+            grounded_answer(question, citations, cfg.min_relevance, retriever.idf)
+            timings["answer"].append((time.perf_counter() - start) * 1000)
+    timings["end_to_end_text_core"] = [a + b + c for a, b, c in zip(timings["guardrail"], timings["retrieval"], timings["answer"])]
     report = {stage: {"P50": percentile(values, 50), "P70": percentile(values, 70), "P100": round(max(values), 2), "n": len(values)} for stage, values in timings.items()}
     print(json.dumps(report, indent=2))
 

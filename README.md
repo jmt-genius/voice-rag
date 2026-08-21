@@ -42,8 +42,9 @@ Set `VITE_API_URL` if the backend is not running at `http://localhost:8000`.
   of silently continuing with an empty transcript.
 - **Vast chunking:** every source passage produces a parent chunk, sentence-window chunks,
   fixed-token chunks with overlap, and topic-aware semantic chunks. Each child retains the
-  source id, language, strategy, offsets, and parent text. Retrieval deduplicates sibling
-  chunks before MMR diversification.
+  source id, language, strategy, offsets, and parent text. The production index retains a
+  bounded, diverse six-chunk representation of each relevant passage rather than every
+  overlapping sibling; this prevents redundant vectors from exhausting local storage.
 - **Vector DB:** Qdrant runs embedded and persists in `data/qdrant`. It indexes dense
   multilingual MiniLM FastEmbed vectors plus a BM25 sidecar; reciprocal-rank fusion is robust for short spoken
   queries, names, and morphology.
@@ -58,6 +59,14 @@ The builder reads a selected language Parquet through DuckDB range reads, so it 
 Hugging Face streaming client's Windows memory issue. It defaults to the Hindi validation
 split, which is suitable for local testing. Use `--split train` only on a machine with enough
 RAM for the multi-GB source Parquet.
+
+To build multiple languages into one collection, build the first language normally and append
+the others while the API is stopped. `en` indexes MSMARCO-XI's original English passages:
+
+```powershell
+python scripts/build_index.py --limit 5000 --languages ta
+python scripts/build_index.py --limit 5000 --languages hi en --append
+```
 
 ```powershell
 cd backend

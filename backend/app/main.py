@@ -8,7 +8,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .answering import grounded_answer
-from .config import settings
+from .config import language_filter, settings
 from .contracts import AskResponse, TextQuestion
 from .guardrails import validate_question
 from .retrieval import HybridRetriever
@@ -34,17 +34,17 @@ app.add_middleware(
 )
 
 
-def run_text(question: str, trace_id: str) -> AskResponse:
+def run_text(question: str, trace_id: str, language: str | None = None) -> AskResponse:
     started = time.perf_counter()
     rejection = validate_question(question)
     guard_ms = (time.perf_counter() - started) * 1000
     if rejection:
         return AskResponse(status="refused", reason=rejection, timings_ms={"guardrail": round(guard_ms, 2)}, trace_id=trace_id)
     retrieval_started = time.perf_counter()
-    citations = app.state.retriever.search(question)
+    citations = app.state.retriever.search(question, language=language)
     retrieval_ms = (time.perf_counter() - retrieval_started) * 1000
     answer_started = time.perf_counter()
-    answer, reason, used = grounded_answer(question, citations, app.state.cfg.min_relevance)
+    answer, reason, used = grounded_answer(question, citations, app.state.cfg.min_relevance, app.state.retriever.idf)
     answer_ms = (time.perf_counter() - answer_started) * 1000
     total = (time.perf_counter() - started) * 1000
     if not answer:
@@ -59,7 +59,7 @@ def health() -> dict:
 
 @app.post("/v1/ask/text", response_model=AskResponse)
 def ask_text(request: TextQuestion) -> AskResponse:
-    return run_text(request.question, str(uuid4()))
+    return run_text(request.question, str(uuid4()), language_filter(request.language))
 
 
 @app.post("/v1/ask/audio", response_model=AskResponse)
@@ -78,7 +78,7 @@ async def ask_audio(audio: UploadFile = File(...), language_code: str = "en-IN")
     except STTError as exc:
         return AskResponse(status="error", reason=str(exc), timings_ms={"stt": round((time.perf_counter() - started) * 1000, 2)}, trace_id=trace_id)
     stt_ms = (time.perf_counter() - started) * 1000
-    response = run_text(transcript, trace_id)
+    response = run_text(transcript, trace_id, language_filter(language_code))
     response.transcript = transcript
     response.timings_ms["stt"] = round(stt_ms, 2)
     return response

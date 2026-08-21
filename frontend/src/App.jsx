@@ -1,12 +1,98 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
-function Timings({ timings }) {
+const LANGUAGES = [
+  { code: 'ta-IN', name: 'Tamil', tag: 'TA' },
+  { code: 'hi-IN', name: 'Hindi', tag: 'HI' },
+  { code: 'en-IN', name: 'English', tag: 'EN' },
+  { code: 'bn-IN', name: 'Bengali', tag: 'BN' },
+]
+
+const MARQUEE = 'VOICE-ENABLED RAG ◆ GROUNDED ANSWERS ◆ ENGINEERED CHUNKING ◆ GUARDRAILED ◆ <200MS PIPELINE ◆ #RAGINGOA ◆ '
+
+const BUDGET_MS = 200
+
+function LatencyReport({ timings }) {
   if (!timings || Object.keys(timings).length === 0) return null
-  return <div className="timings">{Object.entries(timings).map(([stage, ms]) => (
-    <span key={stage}>{stage.replaceAll('_', ' ')}: <strong>{ms} ms</strong></span>
-  ))}</div>
+  const total = Object.values(timings).reduce((a, b) => a + b, 0)
+  const underBudget = total <= BUDGET_MS
+  const percent = Math.min((total / BUDGET_MS) * 100, 100)
+
+  return <div className="latency">
+    <div className="latency-head">
+      <p className="citations-tag">Latency report</p>
+      <span className={`budget-badge ${underBudget ? 'ok' : 'over'}`}>{underBudget ? '✓ Under budget' : '✕ Over budget'}</span>
+    </div>
+    <div className="budget-bar">
+      <div className={`budget-fill ${underBudget ? 'ok' : 'over'}`} style={{ width: `${percent}%` }} />
+      <span className="budget-tick" />
+      <span className="budget-label">200ms budget</span>
+    </div>
+    <p className="latency-total"><strong>{total}ms</strong> total pipeline</p>
+    <ul className="latency-stages">
+      {Object.entries(timings).map(([stage, ms]) => (
+        <li key={stage}>
+          <span>{stage.replaceAll('_', ' ')}</span>
+          <span className="latency-ms">{ms} ms</span>
+        </li>
+      ))}
+    </ul>
+  </div>
+}
+
+function Stat({ value, label }) {
+  return <div className="stat"><strong>{value}</strong><span>{label}</span></div>
+}
+
+function LanguageSelect({ value, onChange, disabled }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const current = LANGUAGES.find((lang) => lang.code === value)
+
+  useEffect(() => {
+    function onClickOutside(event) {
+      if (ref.current && !ref.current.contains(event.target)) setOpen(false)
+    }
+    function onKey(event) {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClickOutside)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [])
+
+  return <div className="lang" ref={ref}>
+    <button
+      type="button"
+      className="lang-trigger"
+      onClick={() => setOpen((v) => !v)}
+      aria-haspopup="listbox"
+      aria-expanded={open}
+      disabled={disabled}
+    >
+      <span className="lang-tag">{current.tag}</span>
+      <span>{current.name}</span>
+      <span className="lang-caret" aria-hidden="true">{open ? '▲' : '▼'}</span>
+    </button>
+    {open && <ul className="lang-menu" role="listbox" aria-label="Spoken language">
+      {LANGUAGES.map((lang) => <li key={lang.code}>
+        <button
+          type="button"
+          role="option"
+          aria-selected={lang.code === value}
+          onClick={() => { onChange(lang.code); setOpen(false) }}
+        >
+          <span className="lang-tag">{lang.tag}</span>
+          <span>{lang.name}</span>
+          {lang.code === value && <span className="lang-check" aria-hidden="true">✓</span>}
+        </button>
+      </li>)}
+    </ul>}
+  </div>
 }
 
 export default function App() {
@@ -15,8 +101,23 @@ export default function App() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [recording, setRecording] = useState(false)
+  const [language, setLanguage] = useState('ta-IN')
   const recorder = useRef(null)
   const chunks = useRef([])
+  const canvasRef = useRef(null)
+  const audioRef = useRef(null)
+  const analyserRef = useRef(null)
+  const rafRef = useRef(null)
+
+  useEffect(() => () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    if (audioRef.current) { try { audioRef.current.close() } catch { /* already closed */ } }
+  }, [])
+
+  useEffect(() => {
+    if (recording) startVisualizer()
+    else stopVisualizer()
+  }, [recording])
 
   async function request(url, options) {
     setLoading(true); setError(''); setResult(null)
@@ -32,45 +133,148 @@ export default function App() {
 
   function askText(event) {
     event.preventDefault()
-    if (question.trim()) request('/v1/ask/text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) })
+    if (question.trim()) request('/v1/ask/text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, language }) })
+  }
+
+  function startVisualizer() {
+    const canvas = canvasRef.current
+    const analyser = analyserRef.current
+    if (!canvas || !analyser) return
+    const dpr = window.devicePixelRatio || 1
+    const width = canvas.clientWidth || 300
+    const height = 80
+    canvas.width = width * dpr
+    canvas.height = height * dpr
+    const ctx = canvas.getContext('2d')
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    const data = new Uint8Array(analyser.frequencyBinCount)
+    const draw = () => {
+      analyser.getByteFrequencyData(data)
+      ctx.clearRect(0, 0, width, height)
+      const bars = 48
+      const step = Math.floor(data.length / bars)
+      const gap = 3
+      const barWidth = (width - (bars - 1) * gap) / bars
+      for (let i = 0; i < bars; i++) {
+        const h = (data[i * step] / 255) * (height - 4)
+        ctx.fillStyle = '#FEE101'
+        ctx.fillRect(i * (barWidth + gap), height - h, barWidth, h)
+      }
+      rafRef.current = requestAnimationFrame(draw)
+    }
+    draw()
+  }
+
+  function stopVisualizer() {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    rafRef.current = null
+    if (analyserRef.current) { analyserRef.current.disconnect(); analyserRef.current = null }
+    const canvas = canvasRef.current
+    if (canvas) { canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height) }
   }
 
   async function toggleRecording() {
     if (recording) { recorder.current.stop(); return }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)()
+      const source = audioContext.createMediaStreamSource(stream)
+      const analyser = audioContext.createAnalyser()
+      analyser.fftSize = 256
+      source.connect(analyser)
+      audioRef.current = audioContext
+      analyserRef.current = analyser
+
       const mediaRecorder = new MediaRecorder(stream)
       chunks.current = []
       mediaRecorder.ondataavailable = (event) => chunks.current.push(event.data)
       mediaRecorder.onstop = () => {
         stream.getTracks().forEach((track) => track.stop())
+        if (audioRef.current) { try { audioRef.current.close() } catch { /* already closed */ } audioRef.current = null }
         setRecording(false)
         const audio = new Blob(chunks.current, { type: mediaRecorder.mimeType || 'audio/webm' })
         const form = new FormData(); form.append('audio', audio, 'question.webm')
-        request('/v1/ask/audio', { method: 'POST', body: form })
+        request(`/v1/ask/audio?language_code=${encodeURIComponent(language)}`, { method: 'POST', body: form })
       }
-      recorder.current = mediaRecorder; mediaRecorder.start(); setRecording(true)
+      recorder.current = mediaRecorder
+      mediaRecorder.start()
+      setRecording(true)
     } catch { setError('Microphone access was denied or is unavailable.') }
   }
 
-  return <main>
-    <section className="hero"><p className="eyebrow">VOICE-ENABLED RAG</p><h1>Ask the corpus.<br />Speak naturally.</h1><p>Grounded answers from MSMARCO-XI, with citations and latency visibility.</p></section>
-    <section className="card">
-      <form onSubmit={askText}>
-        <label htmlFor="question">Ask a question</label>
-        <div className="input-row"><input id="question" value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="Type your question…" disabled={loading} /><button disabled={loading || !question.trim()}>Ask</button></div>
-      </form>
-      <div className="divider"><span>or</span></div>
-      <button className={`record ${recording ? 'active' : ''}`} onClick={toggleRecording} disabled={loading}>{recording ? 'Stop & ask' : 'Record a question'}</button>
-      {recording && <p className="recording">● Recording — click when you’re done</p>}
+  const totalMs = result?.timings_ms ? Object.values(result.timings_ms).reduce((a, b) => a + b, 0) : null
+
+  return <div className="page">
+    <header>
+      <a className="logo" href="#top">V<span>.</span>RAG</a>
+      <nav>
+        <a href="#pipeline">The Pipeline</a>
+        <a href="#answer">The Answer</a>
+      </nav>
+      <button className="cta" onClick={() => document.getElementById('pipeline').scrollIntoView({ behavior: 'smooth' })}>Ask</button>
+    </header>
+
+    <section className="hero" id="top">
+      <p className="eyebrow">Voice-Enabled RAG · Task #2 · #RAGInGoa</p>
+      <h1>Ask the corpus.<br />Speak naturally.</h1>
+      <p className="hero-sub">Grounded answers from MSMARCO-XI — transcription, engineered chunking, vector retrieval and generation, wired together end to end, fast and guardrailed.</p>
+      <p className="hero-meta">Tamil · Hindi · English · Bengali · &lt;200ms pipeline</p>
     </section>
+
+    <section className="stats">
+      <Stat value="4" label="Spoken languages" />
+      <Stat value={totalMs !== null ? `${totalMs}ms` : '—'} label="Last pipeline latency" />
+      <Stat value={result?.citations?.length ?? '—'} label="Sources cited" />
+    </section>
+
+    <div className="marquee" aria-hidden="true"><div className="marquee-inner">{MARQUEE.repeat(2)}</div></div>
+
+    <section className="ask" id="pipeline">
+      <p className="section-tag">01 — genesis day</p>
+      <div className="panel">
+        <label>Spoken language</label>
+        <LanguageSelect value={language} onChange={setLanguage} disabled={loading} />
+
+        <form onSubmit={askText}>
+          <label htmlFor="question">Ask a question</label>
+          <div className="input-row">
+            <input id="question" value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="Type your question…" disabled={loading} />
+            <button className="cta" disabled={loading || !question.trim()}>Ask</button>
+          </div>
+        </form>
+
+        <div className="divider"><span>or speak in the selected language</span></div>
+        <button className={`record ${recording ? 'active' : ''}`} onClick={toggleRecording} disabled={loading}>{recording ? 'Stop & ask' : 'Record a question'}</button>
+        {recording && <>
+          <canvas ref={canvasRef} className="viz" aria-hidden="true" />
+          <p className="recording">● Recording — click when you’re done</p>
+        </>}
+      </div>
+    </section>
+
     {loading && <p className="state">Searching retrieved context…</p>}
     {error && <p className="error">{error}</p>}
-    {result && <section className={`result ${result.status}`}>
-      {result.transcript && <p className="transcript">“{result.transcript}”</p>}
-      <p className="status">{result.status}</p><h2>{result.answer || result.reason}</h2>
-      {result.citations?.map((citation) => <article key={citation.source_id}><p>{citation.text}</p><small>Source {citation.source_id} · {citation.strategy} · score {citation.score}</small></article>)}
-      <Timings timings={result.timings_ms} />
+
+    {result && <section className="result" id="answer">
+      <p className="section-tag">02 — launch day</p>
+      <div className="result-panel">
+        {result.transcript && <p className="transcript">“{result.transcript}”</p>}
+        <p className="status">{result.status}</p>
+        <h2>{result.answer || result.reason}</h2>
+        {result.citations?.length > 0 && <div className="citations">
+          <p className="citations-tag">Sources</p>
+          {result.citations.map((citation) => <article key={citation.source_id}>
+            <p>{citation.text}</p>
+            <small><span className="source-badge">Source {citation.source_id}</span> {citation.strategy} · score {citation.score}</small>
+          </article>)}
+        </div>}
+        <LatencyReport timings={result.timings_ms} />
+      </div>
     </section>}
-  </main>
+
+    <footer>
+      <p><strong>© 2026 Konkan Voice RAG.</strong> All rights reserved.</p>
+      <p>Built for HH Goa 2026 · Task #2 · #RAGInGoa</p>
+    </footer>
+  </div>
 }
