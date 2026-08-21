@@ -171,6 +171,34 @@ class HybridRetriever:
 
     def _load_sidecar(self) -> None:
         path = self.root / "chunks.jsonl"
+        # Supabase mode on Render/Vercel has no local sidecar — build lexical from Supabase table
+        if not path.exists() and self.supabase is not None:
+            try:
+                # Fetch all chunks' metadata for lexical (94k rows, ~100 MB text)
+                offset = 0
+                batch = 1000
+                index: dict[str, list[str]] = defaultdict(list)
+                while True:
+                    res = self.supabase.table("chunks").select("id,text,language,source_id,strategy").range(offset, offset+batch-1).execute()
+                    if not res.data:
+                        break
+                    for item in res.data:
+                        self.chunk_meta[item["id"]] = item
+                        lang = item.get("language") or "en"
+                        for term in terms(item["text"]):
+                            index[term].append(item["id"])
+                            self.lexical_per_lang[lang][term].append(item["id"])
+                    if len(res.data) < batch:
+                        break
+                    offset += batch
+                self.lexical = dict(index)
+                self.lexical_per_lang = {k: dict(v) for k, v in self.lexical_per_lang.items()}
+                total = len(self.chunk_meta)
+                self.idf = {term: math.log((total + 1) / (len(ids) + 1)) + 1.0 for term, ids in self.lexical.items()} if self.lexical else {}
+                self.idf_max = math.log(total + 1) + 1.0 if total else 1.0
+                return
+            except Exception:
+                return
         if not path.exists():
             return
         index: dict[str, list[str]] = defaultdict(list)

@@ -1,0 +1,10 @@
+data/qdrant
+data/qdrant_remote
+data/hnsw
+__pycache__
+.pytest_cache
+*.pyc
+scripts
+tests
+.env
+.env.bak
