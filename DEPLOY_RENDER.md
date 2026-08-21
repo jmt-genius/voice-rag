@@ -67,7 +67,7 @@ If `render.yaml` static-site syntax is rejected, create two services manually:
 
 **API — Web Service (Docker)**
 
-- **New + → Web Service** → connect repo → **Runtime: Docker** → **Dockerfile Path: `backend/Dockerfile`** → **Docker Context: `backend`** → **Plan: Starter → Standard if OOM** → **Health Check: `/health`** →
+- **New + → Web Service** → connect repo → **Runtime: Docker** → **Dockerfile Path: `Dockerfile`** → **Docker Context: `.`** → **Plan: Starter → Standard if OOM** → **Health Check: `/health`** →
 - **Environment:**
   ```
   PYTHONUNBUFFERED=1

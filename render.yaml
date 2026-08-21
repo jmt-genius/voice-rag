@@ -12,8 +12,8 @@ services:
   - type: web
     name: konkan-voice-rag-api
     runtime: docker
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: ./backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     plan: starter            # 512 MB RAM is tight for 150k vectors + ONNX; use Standard (2GB) if OOM
     healthCheckPath: /health
     envVars:
