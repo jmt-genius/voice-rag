@@ -12,6 +12,7 @@ from .answering import grounded_answer
 from .config import language_filter, settings
 from .contracts import AskResponse, TextQuestion
 from .guardrails import validate_question
+from .llm import frame_with_grok
 from .retrieval import HybridRetriever, terms
 from .stt import STTError, SarvamSTT
 
@@ -40,7 +41,7 @@ app.add_middleware(
 )
 
 
-def run_text(question: str, trace_id: str, language: str | None = None) -> AskResponse:
+def run_text(question: str, trace_id: str, language: str | None = None, use_genai: bool = False) -> AskResponse:
     started = time.perf_counter()
     rejection = validate_question(question)
     guard_ms = (time.perf_counter() - started) * 1000
@@ -52,10 +53,23 @@ def run_text(question: str, trace_id: str, language: str | None = None) -> AskRe
     answer_started = time.perf_counter()
     answer, reason, used = grounded_answer(question, citations, app.state.cfg.min_relevance, app.state.retriever.idf)
     answer_ms = (time.perf_counter() - answer_started) * 1000
+    # Optional GenAI framing via Groq/Grok — uses grounded answer + citations as context only
+    genai_ms: float | None = None
+    framed: str | None = None
+    genai_used = False
+    genai_key = app.state.cfg.resolved_genai_key
+    if answer and use_genai and genai_key:
+        genai_started = time.perf_counter()
+        framed = frame_with_grok(question, answer, used, language, genai_key, app.state.cfg.resolved_genai_model, app.state.cfg.resolved_genai_url)
+        genai_ms = (time.perf_counter() - genai_started) * 1000
+        genai_used = framed is not None
     total = (time.perf_counter() - started) * 1000
     if not answer:
         return AskResponse(status="refused", reason=reason, timings_ms={"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(total, 2)}, trace_id=trace_id)
-    return AskResponse(status="answered", answer=answer, citations=used, timings_ms={"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(total, 2)}, trace_id=trace_id)
+    timings: dict[str, float] = {"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(total, 2)}
+    if genai_ms is not None:
+        timings["genai"] = round(genai_ms, 2)
+    return AskResponse(status="answered", answer=answer, framed_answer=framed, genai_used=genai_used, citations=used, timings_ms=timings, trace_id=trace_id)
 
 
 @app.get("/health")
@@ -69,7 +83,7 @@ def health() -> dict:
 
 @app.post("/v1/ask/text", response_model=AskResponse)
 def ask_text(request: TextQuestion) -> AskResponse:
-    return run_text(request.question, str(uuid4()), language_filter(request.language))
+    return run_text(request.question, str(uuid4()), language_filter(request.language), use_genai=request.use_genai)
 
 
 @app.post("/v1/debug/profile")
@@ -167,7 +181,7 @@ def debug_diagnose(request: TextQuestion) -> dict:
 
 
 @app.post("/v1/ask/audio", response_model=AskResponse)
-async def ask_audio(audio: UploadFile = File(...), language_code: str = "en-IN") -> AskResponse:
+async def ask_audio(audio: UploadFile = File(...), language_code: str = "en-IN", use_genai: bool = False) -> AskResponse:
     # Browsers commonly submit e.g. `audio/webm;codecs=opus` from MediaRecorder.
     # Sarvam supports WebM; validate the media type, not its optional codec parameter.
     content_type = (audio.content_type or "").split(";", 1)[0].strip().lower()
@@ -182,7 +196,7 @@ async def ask_audio(audio: UploadFile = File(...), language_code: str = "en-IN")
     except STTError as exc:
         return AskResponse(status="error", reason=str(exc), timings_ms={"stt": round((time.perf_counter() - started) * 1000, 2)}, trace_id=trace_id)
     stt_ms = (time.perf_counter() - started) * 1000
-    response = run_text(transcript, trace_id, language_filter(language_code))
+    response = run_text(transcript, trace_id, language_filter(language_code), use_genai=use_genai)
     response.transcript = transcript
     response.timings_ms["stt"] = round(stt_ms, 2)
     return response

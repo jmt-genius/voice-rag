@@ -125,6 +125,7 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [recording, setRecording] = useState(false)
   const [language, setLanguage] = useState('ta-IN')
+  const [useGenAI, setUseGenAI] = useState(false)
   const recorder = useRef(null)
   const chunks = useRef([])
   const canvasRef = useRef(null)
@@ -156,13 +157,13 @@ export default function App() {
 
   function askText(event) {
     event.preventDefault()
-    if (question.trim()) request('/v1/ask/text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, language }) })
+    if (question.trim()) request('/v1/ask/text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, language, use_genai: useGenAI }) })
   }
 
   function tryPrompt(text, lang) {
     setQuestion(text)
     setLanguage(lang)
-    request('/v1/ask/text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: text, language: lang }) })
+    request('/v1/ask/text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: text, language: lang, use_genai: useGenAI }) })
   }
 
   function startVisualizer() {
@@ -223,7 +224,7 @@ export default function App() {
         setRecording(false)
         const audio = new Blob(chunks.current, { type: mediaRecorder.mimeType || 'audio/webm' })
         const form = new FormData(); form.append('audio', audio, 'question.webm')
-        request(`/v1/ask/audio?language_code=${encodeURIComponent(language)}`, { method: 'POST', body: form })
+        request(`/v1/ask/audio?language_code=${encodeURIComponent(language)}&use_genai=${useGenAI}`, { method: 'POST', body: form })
       }
       recorder.current = mediaRecorder
       mediaRecorder.start()
@@ -265,6 +266,15 @@ export default function App() {
         <label>Spoken language</label>
         <LanguageSelect value={language} onChange={setLanguage} disabled={loading} />
 
+        <div className="genai-toggle">
+          <label className="toggle">
+            <input type="checkbox" checked={useGenAI} onChange={(e) => setUseGenAI(e.target.checked)} disabled={loading} />
+            <span className="toggle-slider" aria-hidden="true"></span>
+            <span className="toggle-label">✨ Groq Enhance</span>
+          </label>
+          <span className="toggle-note">{useGenAI ? 'Gen AI framing on — answer will be rephrased via Groq' : 'Extractive only — no LLM'}</span>
+        </div>
+
         <form onSubmit={askText}>
           <label htmlFor="question">Ask a question</label>
           <div className="input-row">
@@ -300,8 +310,11 @@ export default function App() {
       <p className="section-tag">02 — launch day</p>
       <div className="result-panel">
         {result.transcript && <p className="transcript">“{result.transcript}”</p>}
-        <p className="status">{result.status}</p>
-        <h2>{result.answer || result.reason}</h2>
+        <p className="status">{result.status} {result.genai_used && <span className="genai-badge">✨ Groq framed</span>}</p>
+        <h2>{result.framed_answer || result.answer || result.reason}</h2>
+        {result.framed_answer && result.answer && result.framed_answer !== result.answer && (
+          <details className="grounded-details"><summary>Grounded extractive source</summary><p>{result.answer}</p></details>
+        )}
         {result.citations?.length > 0 && <div className="citations">
           <p className="citations-tag">Sources</p>
           {result.citations.map((citation) => <article key={citation.source_id}>

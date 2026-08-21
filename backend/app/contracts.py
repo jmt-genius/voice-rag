@@ -17,9 +17,12 @@ class AskResponse(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     timings_ms: dict[str, float] = Field(default_factory=dict)
     trace_id: str
+    framed_answer: str | None = None
+    genai_used: bool = False
 
 
 class TextQuestion(BaseModel):
     question: str = Field(min_length=2, max_length=1000)
     language_code: str = Field(default="en-IN", max_length=20)
     language: str | None = Field(default=None, max_length=20, description="Retrieval filter, e.g. bn-IN")
+    use_genai: bool = Field(default=False, description="If true, rephrase grounded answer via Grok")

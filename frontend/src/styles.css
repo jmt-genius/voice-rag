@@ -63,6 +63,19 @@ nav a:hover { color: var(--yellow); }
 .lang-menu button:hover { background: var(--yellow); }
 .lang-menu button[aria-selected="true"] { background: var(--yellow); }
 .lang-check { margin-left: auto; color: var(--green); }
+.genai-toggle { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; flex-wrap: wrap; }
+.toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+.toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: relative; width: 42px; height: 22px; background: rgba(255,255,255,0.25); border: 1px solid rgba(254,225,1,0.5); transition: background 0.2s; }
+.toggle-slider::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: var(--white); transition: transform 0.2s; }
+.toggle input:checked + .toggle-slider { background: var(--yellow); }
+.toggle input:checked + .toggle-slider::after { transform: translateX(20px); background: var(--green); }
+.toggle-label { color: var(--yellow); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+.toggle-note { color: rgba(255,255,255,0.65); font-size: 0.66rem; }
+.genai-badge { display: inline-block; margin-left: 8px; background: var(--yellow); color: var(--green); padding: 2px 7px; font-size: 0.58rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.grounded-details { margin-top: 14px; border: 1px dashed rgba(11,104,57,0.25); padding: 10px 12px; background: rgba(11,104,57,0.04); }
+.grounded-details summary { cursor: pointer; color: var(--green); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.grounded-details p { margin: 8px 0 0; color: rgba(7,73,42,0.75); font-size: 0.8rem; line-height: 1.5; }
 .input-row { display: flex; gap: 14px; }
 .input-row .cta { flex-shrink: 0; padding: 14px 34px; }
 .suggestions { display: flex; flex-direction: column; gap: 12px; margin-top: 18px; }

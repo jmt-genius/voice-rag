@@ -13,7 +13,35 @@ class Settings(BaseSettings):
     supabase_url: str | None = None
     supabase_service_key: str | None = None
     supabase_publishable_key: str | None = None
+    grok_api_key: str | None = None
+    grok_api_url: str = "https://api.x.ai/v1/chat/completions"
+    grok_model: str = "grok-3-mini"
+    xai_api_key: str | None = None
+    groq_api_key: str | None = None
+    groq_api_url: str = "https://api.groq.com/openai/v1/chat/completions"
+    groq_model: str = "groq/compound"
     collection_name: str = "msmarco_xi"
+
+    @property
+    def resolved_grok_key(self) -> str | None:
+        return self.grok_api_key or self.xai_api_key
+
+    @property
+    def resolved_groq_key(self) -> str | None:
+        return self.groq_api_key
+
+    @property
+    def resolved_genai_key(self) -> str | None:
+        # Prefer Groq if set, else Grok
+        return self.groq_api_key or self.grok_api_key or self.xai_api_key
+
+    @property
+    def resolved_genai_url(self) -> str:
+        return self.groq_api_url if self.groq_api_key else self.grok_api_url
+
+    @property
+    def resolved_genai_model(self) -> str:
+        return self.groq_model if self.groq_api_key else self.grok_model
     # Supported by FastEmbed 0.3.6; covers the Indic languages in MSMARCO-XI.
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     top_k: int = 6
