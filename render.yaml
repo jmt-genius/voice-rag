@@ -44,4 +44,4 @@ services:
     staticPublishPath: ./frontend/dist
     envVars:
       - key: VITE_API_URL
-        value: https://konkan-voice-rag-api.onrender.com
+        value: https://voice-rag-api-436199641844.asia-south1.run.app
