@@ -1,0 +1,16 @@
+data/qdrant
+data/qdrant_remote/collection
+data/qdrant_remote/*.lock
+data/qdrant_remote/meta.json
+data/hnsw/*.hnsw
+data/hnsw/*.ids.json
+__pycache__
+.pytest_cache
+*.pyc
+.pytest_cache
+scripts/
+tests/
+.env
+.env.bak
+.env.tmp
+.env.supabase

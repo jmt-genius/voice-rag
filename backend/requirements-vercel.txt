@@ -1,0 +1,13 @@
+# Slim runtime for Vercel (must stay <500 MB bundled)
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+httpx==0.28.1
+pydantic-settings==2.7.1
+supabase==2.31.0
+fastembed==0.3.6
+onnxruntime==1.19.2
+numpy==1.26.4
+orjson==3.10.15
+# qdrant-client, hnswlib, datasets, duckdb are NOT needed at runtime when using Supabase
+# (they are only for local index building). Keep them in requirements-dev.txt
