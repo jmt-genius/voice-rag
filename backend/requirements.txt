@@ -4,8 +4,11 @@ python-multipart==0.0.20
 httpx==0.28.1
 pydantic-settings==2.7.1
 supabase>=2.0.0
-qdrant-client[fastembed]==1.12.1
-hnswlib==0.8.0
+fastembed==0.3.6
 onnxruntime==1.19.2
 numpy==1.26.4
 orjson==3.10.15
+# qdrant-client and hnswlib are only needed for local HNSW mode (not Supabase)
+# Uncomment below if deploying without Supabase (local data/hnsw mode):
+# qdrant-client==1.12.1
+# hnswlib==0.8.0

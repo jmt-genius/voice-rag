@@ -1,4 +1,9 @@
 -r requirements.txt
+# Local/HNSW mode extras (not needed in Supabase-only deployment)
+qdrant-client==1.12.1
+hnswlib==0.8.0
+# Indexing / data pipeline
 datasets==3.2.0
 duckdb==1.2.0
+# Testing
 pytest==8.3.4

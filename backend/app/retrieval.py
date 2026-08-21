@@ -18,9 +18,17 @@ os.environ.setdefault("KMP_AFFINITY", "granularity=fine,compact,1,0")
 os.environ.setdefault("MALLOC_ARENA_MAX", "2")
 
 import numpy as np
-from fastembed import TextEmbedding
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+# TextEmbedding is imported lazily in _embedder property to avoid loading
+# 235MB ONNX session at startup (would OOM 512MB containers).
+# qdrant-client is optional — only needed in local/HNSW mode (not Supabase).
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import Distance, PointStruct, VectorParams
+    _qdrant_available = True
+except ImportError:
+    QdrantClient = None  # type: ignore[assignment,misc]
+    Distance = PointStruct = VectorParams = None  # type: ignore[assignment]
+    _qdrant_available = False
 
 from .chunking import Chunk
 from .config import Settings
@@ -77,23 +85,25 @@ class HybridRetriever:
                 self.supabase = _create(cfg.supabase_url, cfg.supabase_service_key)
             except Exception:
                 self.supabase = None
-        if cfg.qdrant_host:
+        if cfg.qdrant_host and _qdrant_available:
             kwargs = {"host": cfg.qdrant_host, "port": cfg.qdrant_port}
             if cfg.qdrant_api_key:
                 kwargs["api_key"] = cfg.qdrant_api_key
                 kwargs["https"] = True
             self.client = QdrantClient(**kwargs)
-        else:
+        elif _qdrant_available:
             try:
                 self.client = QdrantClient(path=str(self.root))
             except Exception:
                 self.client = None
+        else:
+            self.client = None
         # If Supabase is configured, we don't need local HNSW/Qdrant for dense
         if self.supabase is not None:
             self.client = None
-        threads_count = int(os.getenv("EMBEDDING_THREADS", "1"))
-        self.embedder = TextEmbedding(model_name=cfg.embedding_model, threads=threads_count)
-        import gc; gc.collect()
+        # Embedder is initialised lazily on first query via the `embedder` property.
+        # This keeps startup RSS ~150 MB so 512 MB containers don't OOM.
+        self._embedder_instance: object | None = None
         self.lexical: dict[str, list[str]] = {}
         self.lexical_per_lang: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
         self.chunk_meta: dict[str, dict] = {}
@@ -106,7 +116,7 @@ class HybridRetriever:
         # In Supabase mode: skip loading 94k rows into RAM — just set sentinel
         # so search() knows to proceed. chunk_meta is populated on-demand per result.
         if self.supabase is not None:
-            self.chunk_meta["__supabase__"] = {}
+            self.chunk_meta["__supabase__"] = {}  # sentinel so search() proceeds
         else:
             self._load_sidecar()
             self._load_fast_index()
@@ -220,6 +230,18 @@ class HybridRetriever:
         }) for c, v in zip(batch, vectors)]
         self.client.upsert(self.cfg.collection_name, points=points, wait=True)
         return len(points)
+
+    @property
+    def embedder(self) -> object:
+        """Lazy ONNX session: load once on first query, never at startup."""
+        if self._embedder_instance is None:
+            from fastembed import TextEmbedding
+            threads_count = int(os.getenv("EMBEDDING_THREADS", "1"))
+            self._embedder_instance = TextEmbedding(
+                model_name=self.cfg.embedding_model,
+                threads=threads_count,
+            )
+        return self._embedder_instance
 
     def _get_query_vector(self, question: str) -> np.ndarray:
         # Tier-1 vector cache (LowLatency2.pdf sec 4): repeated chip prompts hit in <1ms.

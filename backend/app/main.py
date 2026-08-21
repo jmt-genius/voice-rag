@@ -21,17 +21,6 @@ async def lifespan(app: FastAPI):
     cfg = settings()
     app.state.cfg = cfg
     app.state.retriever = HybridRetriever(cfg)
-    # Pre-warm the embedding model + HNSW index so the first user request
-    # stays within the sub-200ms budget (cold ONNX/HNSW init is the dominant
-    # latency spike on the very first query). Warm the embedder directly and
-    # page the graph with one dense search so no stage is cold on request #1.
-    try:
-        # Warm up the embedder with a single query to initialize the ONNX session
-        list(app.state.retriever.embedder.query_embed(["warmup"]))
-        app.state.retriever.search("warmup", limit=1, language="en")
-        import gc; gc.collect()
-    except Exception:
-        pass
     app.state.stt = SarvamSTT(cfg.sarvam_api_key, cfg.sarvam_stt_url, cfg.stt_timeout_ms)
     yield
 
@@ -71,7 +60,11 @@ def run_text(question: str, trace_id: str, language: str | None = None) -> AskRe
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True, "indexed_chunks": len(app.state.retriever.chunk_meta)}
+    r = app.state.retriever
+    # In Supabase mode chunk_meta contains only the sentinel key "__supabase__";
+    # report 0 locally-indexed chunks (data lives in Supabase).
+    chunk_count = 0 if set(r.chunk_meta) <= {"__supabase__"} else len(r.chunk_meta)
+    return {"ok": True, "indexed_chunks": chunk_count, "mode": "supabase" if r.supabase else "local"}
 
 
 @app.post("/v1/ask/text", response_model=AskResponse)
