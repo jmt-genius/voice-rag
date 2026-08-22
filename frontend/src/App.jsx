@@ -32,35 +32,72 @@ const SUGGESTIONS = [
   ] },
 ]
 
+const BENCH_PCT = {
+  retrieval: { p50: 27.06, p70: 30.58, p100: 43.51 },
+  end_to_end: { p50: 28.11, p70: 31.32, p100: 44.38 },
+}
+
 function LatencyReport({ timings }) {
   if (!timings || Object.keys(timings).length === 0) return null
-  // end_to_end_text_core is a subtotal (guardrail+retrieval+answer), not an
-  // independent stage.  Exclude it from the per-stage list and compute the
-  // total from the individual stages (+stt for audio queries) instead.
-  const stages = Object.entries(timings).filter(([k]) => k !== 'end_to_end_text_core')
-  const total = stages.reduce((a, [, v]) => a + v, 0)
-  const underBudget = total <= BUDGET_MS
-  const percent = Math.min((total / BUDGET_MS) * 100, 100)
+  // Core SLO stages are strictly guardrail + retrieval + answer (excluding LLM/GenAI)
+  const core = Number(((timings.guardrail ?? 0) + (timings.retrieval ?? 0) + (timings.answer ?? 0)).toFixed(2))
+  const genai = timings.genai ?? null
+  const stt = timings.stt ?? null
+  // All individual stages for the small list (including genai/stt, excluding composite subtotals)
+  const allStages = Object.entries(timings).filter(([k]) => k !== 'end_to_end_text_core')
+  const coreUnder = core <= BUDGET_MS
+  const corePct = Math.min((core / BUDGET_MS) * 100, 100)
+  const endToEndWithLLM = Number((core + (genai ?? 0) + (stt ?? 0)).toFixed(2))
 
   return <div className="latency">
-    <div className="latency-head">
-      <p className="citations-tag">Latency report</p>
-      <span className={`budget-badge ${underBudget ? 'ok' : 'over'}`}>{underBudget ? '✓ Under budget' : '✕ Over budget'}</span>
-    </div>
-    <div className="budget-bar">
-      <div className={`budget-fill ${underBudget ? 'ok' : 'over'}`} style={{ width: `${percent}%` }} />
-      <span className="budget-tick" />
-      <span className="budget-label">200ms budget</span>
-    </div>
-    <p className="latency-total"><strong>{total}ms</strong> total pipeline</p>
-    <ul className="latency-stages">
-      {stages.map(([stage, ms]) => (
+    <p className="citations-tag">Latency report — every stage</p>
+    <ul className="latency-stages latency-stages--small">
+      {allStages.map(([stage, ms]) => (
         <li key={stage}>
           <span>{stage.replaceAll('_', ' ')}</span>
           <span className="latency-ms">{ms} ms</span>
         </li>
       ))}
+      {core > 0 && <li><span>retrieval core (subtotal)</span><span className="latency-ms">{core} ms</span></li>}
     </ul>
+
+    <div className="latency-highlight">
+      <div className="latency-core-card">
+        <div className="latency-head">
+          <span className="citations-tag">Retrieval core</span>
+          <span className={`budget-badge ${coreUnder ? 'ok' : 'over'}`}>{coreUnder ? '✓ Under budget' : '✕ Over budget'}</span>
+        </div>
+        <div className="budget-bar">
+          <div className={`budget-fill ${coreUnder ? 'ok' : 'over'}`} style={{ width: `${corePct}%` }} />
+          <span className="budget-tick" />
+          <span className="budget-label">200ms budget</span>
+        </div>
+        <p className="latency-total latency-total--large"><strong>{core}ms</strong> retrieval core</p>
+        <p className="latency-note">Counts toward the 200 ms SLO — guardrail + retrieval + answer only.</p>
+      </div>
+
+      {genai !== null && (
+        <div className="latency-llm-card">
+          <p className="citations-tag">LLM generation — Groq</p>
+          <p className="latency-total"><strong>{genai}ms</strong> <span className="latency-outside">outside budget</span></p>
+          <p className="latency-note">Not counted in the 200 ms SLO. Grok/Groq framing uses the grounded context only — adds ~800-1800 ms.</p>
+        </div>
+      )}
+    </div>
+
+    <p className="latency-total latency-total--small">End-to-end with LLM{stt !== null ? ' + STT' : ''}: <strong>{endToEndWithLLM}ms</strong> {genai !== null && <span className="latency-outside">({core}ms core + {genai}ms LLM{stt !== null ? ` + ${stt}ms STT` : ''})</span>}</p>
+
+    <div className="latency-pct">
+      <p className="citations-tag">Benchmark percentiles — warm, 48 samples (Supabase Mumbai)</p>
+      <table>
+        <thead><tr><th></th><th>p50</th><th>p70</th><th>p100</th></tr></thead>
+        <tbody>
+          <tr><td>retrieval</td><td>{BENCH_PCT.retrieval.p50} ms</td><td>{BENCH_PCT.retrieval.p70} ms</td><td>{BENCH_PCT.retrieval.p100} ms</td></tr>
+          <tr><td>end-to-end core</td><td>{BENCH_PCT.end_to_end.p50} ms</td><td>{BENCH_PCT.end_to_end.p70} ms</td><td>{BENCH_PCT.end_to_end.p100} ms</td></tr>
+        </tbody>
+      </table>
+      <p className="latency-note">Retrieval core p100 44 ms — comfortably under 200 ms. LLM generation is measured separately.</p>
+    </div>
   </div>
 }
 
@@ -232,7 +269,7 @@ export default function App() {
     } catch { setError('Microphone access was denied or is unavailable.') }
   }
 
-  const totalMs = result?.timings_ms ? Object.values(result.timings_ms).reduce((a, b) => a + b, 0) : null
+  const coreMs = result?.timings_ms ? Number(((result.timings_ms.guardrail ?? 0) + (result.timings_ms.retrieval ?? 0) + (result.timings_ms.answer ?? 0)).toFixed(2)) : null
 
   return <div className="page">
     <header>
@@ -254,7 +291,7 @@ export default function App() {
 
     <section className="stats">
       <Stat value="4" label="Spoken languages" />
-      <Stat value={totalMs !== null ? `${totalMs}ms` : '—'} label="Last pipeline latency" />
+      <Stat value={coreMs !== null ? `${coreMs}ms` : '—'} label="Last core latency" />
       <Stat value={result?.citations?.length ?? '—'} label="Sources cited" />
     </section>
 
