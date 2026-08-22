@@ -15,12 +15,12 @@ const BUDGET_MS = 200
 
 const SUGGESTIONS = [
   { lang: 'ta-IN', label: 'Tamil', prompts: [
-    'சுறாக்கள் எங்கு வாழ்கின்றன?',
     'போட்ஸ்வானாவின் 2015 எச்டிஐ மதிப்பு என்ன?',
+    'சுறாக்கள் உலகம் முழுவதும் உள்ள பெருங்கடல்களில் வாழ்கின்றனவா?',
   ] },
   { lang: 'hi-IN', label: 'Hindi', prompts: [
     'Spotify USA का कार्यालय कहां स्थित है?',
-    'टेबलो डेस्कटॉप प्रमाणित पेशेवर परीक्षा शुल्क कितना है?',
+    'Spotify USA पर संपर्क करने का फोन नंबर क्या है?',
   ] },
   { lang: 'en-IN', label: 'English', prompts: [
     'What is the personal income tax rate in Sweden?',
@@ -28,8 +28,8 @@ const SUGGESTIONS = [
     'What should I do if my dog has a seizure?',
   ] },
   { lang: 'bn-IN', label: 'Bengali', prompts: [
-    'মেরিল্যান্ড পতাকার ইতিহাস ও তথ্য কী?',
     'একটি গাড়িকে দুর্দান্ত স্টাইলের চাকা দিয়ে সাজানোর সুবিধা কী?',
+    'কংগ্রেসের ক্ষমতা থাকবে ডাকঘর এবং সড়ক স্থাপন করা কি?',
   ] },
 ]
 
