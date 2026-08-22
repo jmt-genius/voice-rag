@@ -126,9 +126,25 @@ nav a:hover { color: var(--yellow); }
 .budget-label { position: absolute; right: 0; bottom: calc(100% + 6px); color: var(--green); font-size: 0.56rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
 .latency-total { margin: 14px 0 0; color: var(--green-ink); font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; }
 .latency-total strong { color: var(--green); font-family: var(--display); font-size: 1.5rem; letter-spacing: 0; }
+.latency-total--large strong { font-size: 2.2rem; }
+.latency-total--small { font-size: 0.66rem; opacity: 0.85; }
+.latency-total--small strong { font-size: 1rem; }
 .latency-stages { list-style: none; margin: 16px 0 0; padding: 0; }
 .latency-stages li { display: flex; justify-content: space-between; gap: 14px; padding: 9px 0; border-bottom: 1px dashed rgba(11, 104, 57, 0.25); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(7, 73, 42, 0.75); }
 .latency-stages li:last-child { border-bottom: 0; }
+.latency-stages--small li { font-size: 0.62rem; padding: 6px 0; opacity: 0.9; }
+.latency-highlight { display: grid; grid-template-columns: 1.3fr 0.9fr; gap: 14px; margin-top: 18px; }
+.latency-core-card { border: 2px solid var(--green); background: rgba(254,225,1,0.12); padding: 14px; }
+.latency-llm-card { border: 1px solid rgba(11,104,57,0.25); background: rgba(11,104,57,0.04); padding: 14px; }
+.latency-llm-card .latency-total strong { color: var(--green-ink); font-size: 1.3rem; }
+.latency-outside { color: #C0392B; font-weight: 700; font-size: 0.62rem; letter-spacing: 0.08em; }
+.latency-note { margin: 8px 0 0; color: rgba(7,73,42,0.6); font-size: 0.66rem; line-height: 1.5; text-transform: none; letter-spacing: 0; }
+.latency-pct { margin-top: 18px; border-top: 1px solid rgba(11,104,57,0.15); padding-top: 14px; }
+.latency-pct table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.68rem; }
+.latency-pct th, .latency-pct td { text-align: left; padding: 6px 8px; border: 1px solid rgba(11,104,57,0.2); }
+.latency-pct th { background: var(--green); color: var(--yellow); font-size: 0.6rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.latency-pct td { color: var(--green-ink); }
+@media (max-width: 700px) { .latency-highlight { grid-template-columns: 1fr; } }
 .latency-ms { color: var(--green); font-weight: 700; white-space: nowrap; }
 
 .flow { width: min(1120px, calc(100% - 48px)); margin: 84px auto 0; scroll-margin-top: 100px; }

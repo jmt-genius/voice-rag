@@ -63,10 +63,11 @@ def run_text(question: str, trace_id: str, language: str | None = None, use_gena
         framed = frame_with_grok(question, answer, used, language, genai_key, app.state.cfg.resolved_genai_model, app.state.cfg.resolved_genai_url)
         genai_ms = (time.perf_counter() - genai_started) * 1000
         genai_used = framed is not None
+    core_total = guard_ms + retrieval_ms + answer_ms
     total = (time.perf_counter() - started) * 1000
     if not answer:
-        return AskResponse(status="refused", reason=reason, timings_ms={"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(total, 2)}, trace_id=trace_id)
-    timings: dict[str, float] = {"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(total, 2)}
+        return AskResponse(status="refused", reason=reason, timings_ms={"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(core_total, 2)}, trace_id=trace_id)
+    timings: dict[str, float] = {"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "end_to_end_text_core": round(core_total, 2)}
     if genai_ms is not None:
         timings["genai"] = round(genai_ms, 2)
     return AskResponse(status="answered", answer=answer, framed_answer=framed, genai_used=genai_used, citations=used, timings_ms=timings, trace_id=trace_id)
