@@ -63,15 +63,30 @@ nav a:hover { color: var(--yellow); }
 .lang-menu button:hover { background: var(--yellow); }
 .lang-menu button[aria-selected="true"] { background: var(--yellow); }
 .lang-check { margin-left: auto; color: var(--green); }
-.genai-toggle { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; flex-wrap: wrap; }
-.toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
-.toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
-.toggle-slider { position: relative; width: 42px; height: 22px; background: rgba(255,255,255,0.25); border: 1px solid rgba(254,225,1,0.5); transition: background 0.2s; }
-.toggle-slider::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: var(--white); transition: transform 0.2s; }
-.toggle input:checked + .toggle-slider { background: var(--yellow); }
-.toggle input:checked + .toggle-slider::after { transform: translateX(20px); background: var(--green); }
-.toggle-label { color: var(--yellow); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
-.toggle-note { color: rgba(255,255,255,0.65); font-size: 0.66rem; }
+/* ── Enhanced AI Control Bar & Toggle Card ── */
+.ai-control-bar { margin: 18px 0 22px; }
+.ai-toggle-card { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; background: rgba(0, 0, 0, 0.24); border: 1.5px solid rgba(254, 225, 1, 0.35); cursor: pointer; text-align: left; transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1); position: relative; overflow: hidden; font-family: inherit; }
+.ai-toggle-card::before { content: ""; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: rgba(254, 225, 1, 0.4); transition: background 0.2s, width 0.2s; }
+.ai-toggle-card:hover { background: rgba(0, 0, 0, 0.38); border-color: rgba(254, 225, 1, 0.75); box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3); }
+.ai-toggle-card.active { background: linear-gradient(135deg, rgba(254, 225, 1, 0.14) 0%, rgba(11, 104, 57, 0.3) 100%); border-color: var(--yellow); box-shadow: 0 0 20px rgba(254, 225, 1, 0.22), inset 0 0 12px rgba(254, 225, 1, 0.08); }
+.ai-toggle-card.active::before { background: var(--yellow); width: 6px; }
+.ai-toggle-left { display: flex; align-items: center; gap: 14px; flex: 1; }
+.ai-sparkle { font-size: 1.3rem; display: inline-grid; place-items: center; width: 38px; height: 38px; background: rgba(254, 225, 1, 0.12); border: 1px solid rgba(254, 225, 1, 0.3); flex-shrink: 0; transition: transform 0.2s, background 0.2s; }
+.ai-toggle-card:hover .ai-sparkle { transform: scale(1.08) rotate(4deg); }
+.ai-sparkle.pulse { background: var(--yellow); color: var(--green); border-color: var(--yellow); animation: sparkle-glow 2s ease-in-out infinite; }
+@keyframes sparkle-glow { 0%, 100% { box-shadow: 0 0 0 rgba(254, 225, 1, 0); } 50% { box-shadow: 0 0 14px rgba(254, 225, 1, 0.6); } }
+.ai-text-block { display: flex; flex-direction: column; gap: 4px; }
+.ai-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ai-title { font: 700 0.82rem var(--mono); color: var(--white); letter-spacing: 0.06em; text-transform: uppercase; }
+.ai-toggle-card.active .ai-title { color: var(--yellow); }
+.ai-status-tag { font: 700 0.58rem var(--mono); letter-spacing: 0.12em; text-transform: uppercase; padding: 2px 7px; border: 1px solid rgba(255, 255, 255, 0.2); color: rgba(255, 255, 255, 0.6); background: rgba(255, 255, 255, 0.06); }
+.ai-status-tag.active { border-color: var(--yellow); color: var(--green); background: var(--yellow); }
+.ai-desc { font-size: 0.7rem; line-height: 1.4; color: rgba(255, 255, 255, 0.72); }
+.ai-switch { flex-shrink: 0; }
+.ai-switch-track { width: 48px; height: 26px; background: rgba(255, 255, 255, 0.2); border: 1.5px solid rgba(254, 225, 1, 0.4); position: relative; transition: background 0.25s, border-color 0.25s; }
+.ai-switch-track.on { background: var(--yellow); border-color: var(--yellow); }
+.ai-switch-thumb { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; background: var(--white); transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.25s; }
+.ai-switch-track.on .ai-switch-thumb { transform: translateX(22px); background: var(--green); }
 .genai-badge { display: inline-block; margin-left: 8px; background: var(--yellow); color: var(--green); padding: 2px 7px; font-size: 0.58rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .grounded-details { margin-top: 14px; border: 1px dashed rgba(11,104,57,0.25); padding: 10px 12px; background: rgba(11,104,57,0.04); }
 .grounded-details summary { cursor: pointer; color: var(--green); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }

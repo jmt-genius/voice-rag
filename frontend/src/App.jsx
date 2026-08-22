@@ -304,13 +304,37 @@ export default function App() {
         <label>Spoken language</label>
         <LanguageSelect value={language} onChange={setLanguage} disabled={loading} />
 
-        <div className="genai-toggle">
-          <label className="toggle">
-            <input type="checkbox" checked={useGenAI} onChange={(e) => setUseGenAI(e.target.checked)} disabled={loading} />
-            <span className="toggle-slider" aria-hidden="true"></span>
-            <span className="toggle-label">✨ Groq Enhance</span>
-          </label>
-          <span className="toggle-note">{useGenAI ? 'Gen AI framing on — answer will be rephrased via Groq' : 'Extractive only — no LLM'}</span>
+        <div className="ai-control-bar">
+          <button
+            type="button"
+            className={`ai-toggle-card ${useGenAI ? 'active' : ''}`}
+            onClick={() => !loading && setUseGenAI((v) => !v)}
+            disabled={loading}
+            aria-pressed={useGenAI}
+            title="Toggle Groq LLM answer synthesis"
+          >
+            <div className="ai-toggle-left">
+              <span className={`ai-sparkle ${useGenAI ? 'pulse' : ''}`} aria-hidden="true">✨</span>
+              <div className="ai-text-block">
+                <div className="ai-title-row">
+                  <span className="ai-title">Groq AI Synthesis</span>
+                  <span className={`ai-status-tag ${useGenAI ? 'active' : ''}`}>
+                    {useGenAI ? '● LLM Active' : '○ Extractive Only'}
+                  </span>
+                </div>
+                <span className="ai-desc">
+                  {useGenAI
+                    ? 'Generates natural, fluent answers from retrieved passages via Groq LLaMA'
+                    : 'Extracts exact verbatim sentences directly from passages with zero hallucination'}
+                </span>
+              </div>
+            </div>
+            <div className="ai-switch" aria-hidden="true">
+              <div className={`ai-switch-track ${useGenAI ? 'on' : ''}`}>
+                <div className="ai-switch-thumb" />
+              </div>
+            </div>
+          </button>
         </div>
 
         <form onSubmit={askText}>
