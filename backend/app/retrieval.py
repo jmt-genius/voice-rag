@@ -34,11 +34,11 @@ from .chunking import Chunk
 from .config import Settings
 from .contracts import Citation
 
-TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+TOKEN_RE = re.compile(r"[^\s\.,;:!?\(\)\[\]\{\}\"\'`\<\>।॥/\\—–\-+*#@&%$=~^]+", re.UNICODE)
 
 
 def terms(text: str) -> set[str]:
-    return {x.lower() for x in TOKEN_RE.findall(text) if len(x) > 2}
+    return {x.lower() for x in TOKEN_RE.findall(text) if len(x) > 1}
 
 
 @dataclass

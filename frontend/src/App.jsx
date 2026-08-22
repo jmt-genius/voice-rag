@@ -15,20 +15,21 @@ const BUDGET_MS = 200
 
 const SUGGESTIONS = [
   { lang: 'ta-IN', label: 'Tamil', prompts: [
-    'இதயத் தாக்குதலின் அறிகுறிகள் என்ன?',
-    'தலைவலி ஏற்படும் காரணங்கள் என்ன?',
+    'சுறாக்கள் எங்கு வாழ்கின்றன?',
+    'போட்ஸ்வானாவின் 2015 எச்டிஐ மதிப்பு என்ன?',
   ] },
   { lang: 'hi-IN', label: 'Hindi', prompts: [
-    'अगर कुत्ते का दौरा पड़े तो क्या करें?',
-    'बुखार आने पर क्या करना चाहिए?',
+    'Spotify USA का कार्यालय कहां स्थित है?',
+    'टेबलो डेस्कटॉप प्रमाणित पेशेवर परीक्षा शुल्क कितना है?',
   ] },
   { lang: 'en-IN', label: 'English', prompts: [
+    'What is the personal income tax rate in Sweden?',
+    'What are methanogens?',
     'What should I do if my dog has a seizure?',
-    'What are the symptoms of a heart attack?',
   ] },
   { lang: 'bn-IN', label: 'Bengali', prompts: [
-    'কুকুরের খিঁচুটি পড়লে কী করবেন?',
-    'জ্বর এলে কী করবেন?',
+    'মেরিল্যান্ড পতাকার ইতিহাস ও তথ্য কী?',
+    'একটি গাড়িকে দুর্দান্ত স্টাইলের চাকা দিয়ে সাজানোর সুবিধা কী?',
   ] },
 ]
 

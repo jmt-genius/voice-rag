@@ -19,7 +19,7 @@ whom why will with would you your yours yourself yourselves about after again be
 between during against
 """.split())
 
-MIN_OVERLAP = 0.5
+MIN_OVERLAP = 0.35
 
 
 def content_terms(text: str) -> set[str]:
