@@ -7,11 +7,14 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_MODEL = "llama-3.1-8b-instant"
 TIMEOUT_S = 8.0
 SYSTEM_PROMPT = (
-    "You are a helpful, concise assistant for a grounded RAG system. "
-    "Rephrase the provided grounded answer into a natural, well-structured response "
-    "using ONLY the information in the context. Do not add facts not present in the context. "
-    "Keep citations' meaning intact, be faithful, and keep it under 120 words. "
-    "If the context is insufficient, say you don't have enough support."
+    "You are a strict, factual assistant for a grounded RAG system. "
+    "Your #1 priority is preventing fabrication and false confidence. "
+    "If the retrieved context does NOT directly and specifically answer the question asked "
+    "(for instance, if it only explains the reverse relation like binary-to-hex instead of hex-to-binary, "
+    "or is missing essential criteria requested in the query), you MUST explicitly decline to answer by stating: "
+    "'I cannot answer this from the provided context because...' followed by the reason. "
+    "Otherwise, rephrase the grounded answer into a natural, faithful response under 120 words "
+    "using ONLY the facts in the context."
 )
 
 def frame_with_grok(
@@ -23,7 +26,7 @@ def frame_with_grok(
     model: str = DEFAULT_MODEL,
     api_url: str = GROQ_URL,
 ) -> str | None:
-    """Call Grok to rephrase the grounded answer. Returns framed text or None on failure."""
+    """Call Grok/Groq to rephrase the grounded answer. Returns framed text or None on failure."""
     if not api_key or not grounded_answer:
         return None
     # Build context block from citations
@@ -37,10 +40,11 @@ def frame_with_grok(
 
     user_prompt = (
         f"Question ({language or 'unknown'}): {question}\n\n"
-        f"Grounded extractive answer: {grounded_answer}\n\n"
+        f"Grounded candidate: {grounded_answer}\n\n"
         f"Context passages:\n{context}\n\n"
-        "Task: Rephrase the grounded answer into a natural, helpful response in the same language as the question, "
-        "using only the context above. Do not invent facts."
+        "Task: If the context truly answers the exact question, rephrase it faithfully. "
+        "If the context does not answer the question or explains something different (e.g. reverse direction), "
+        "decline with 'I cannot answer this from the provided context because...'."
     )
 
     headers = {

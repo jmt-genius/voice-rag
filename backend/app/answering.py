@@ -8,18 +8,46 @@ from .retrieval import terms
 SPLIT = re.compile(r"(?<=[.!?।])\s+")
 
 # Content-word grounding: function words must not count as evidence. A passage
-# that only shares "what" or "the" with the question is not support for it.
+# that only shares "what" or "the" or "and" with the question is not support for it.
 STOPWORDS = frozenset("""
-all also any are because been being both but can could did do does doing each few for from
-further had has have having he her hers herself him himself his how i if in into is it its
-itself me more most my myself nor of off on once only or our ours ourselves out over own
-same she should so some such than that the their theirs them themselves then there these
-they this those through to too until up very was we were what when where which while who
-whom why will with would you your yours yourself yourselves about after again before
-between during against
+a about after again against all also an and any are as at because been being before
+below between both but by can could did do does doing down during each few for from
+further had has have having he her here hers herself him himself his how i if in into
+is it its itself just me more most my myself no nor not now of off on once only or
+other our ours ourselves out over own same she should so some such than that the their
+theirs them themselves then there these they this those through to too under until up
+very was we were what when where which while who whom why will with would you your
+yours yourself yourselves
 """.split())
 
-MIN_OVERLAP = 0.35
+MIN_OVERLAP = 0.50
+
+
+def is_refusal(text: str | None) -> bool:
+    """Detect if an LLM framing response is actually a refusal/abstention."""
+    if not text:
+        return False
+    lower = text.lower()
+    refusal_signals = [
+        "does not contain",
+        "does not mention",
+        "does not provide",
+        "not enough support",
+        "cannot be answered",
+        "no information",
+        "not contain information",
+        "context only explains",
+        "context does not",
+        "only information provided explains",
+        "only explains how to",
+        "only explains the opposite",
+        "cannot answer",
+        "unable to answer",
+        "do not have enough support",
+        "don't have enough support",
+        "insufficient context",
+    ]
+    return any(sig in lower for sig in refusal_signals)
 
 
 def content_terms(text: str) -> set[str]:
@@ -30,16 +58,19 @@ def _grounded(shared: set[str], q_count: int, q_weights: dict[str, float] | None
               q_max_term: str | None) -> bool:
     """The answer sentence must echo the question's distinctive terms.
 
-    For a two-term question like "capital + france", one shared term is not
-    enough: "capital" also appears in finance passages. Short questions require
-    every content term; longer questions require a clear majority of the
-    query's term mass, weighted by inverse document frequency so that rare,
-    distinctive terms ("seine", "metadata") dominate common ones ("located"),
-    and the single most distinctive term must itself appear in the answer.
+    For short questions (<=2 terms), all content terms must appear.
+    For 3-term questions, at least 2 distinct terms must appear.
+    For 4-term questions, at least 3 distinct terms must appear (preventing
+    loosely-related 2-term matches on multi-criteria queries).
+    For 5+ term questions, at least 3 distinct terms and >= 50% term mass.
     """
     if q_count <= 2:
         return len(shared) == q_count
-    if len(shared) < 2:
+    if q_count == 3:
+        return len(shared) >= 2
+    if q_count == 4:
+        return len(shared) >= 3
+    if len(shared) < 3:
         return False
     if q_max_term and q_max_term not in shared:
         return False

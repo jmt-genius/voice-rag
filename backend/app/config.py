@@ -51,6 +51,10 @@ class Settings(BaseSettings):
 
 LATENCY_BUDGET_MS = 50
 
+# Eval-loop optional config (eval/target.py reads these via optional_config())
+GENERATION_BACKEND = "api"        # "api" = cloud/Groq, not local GPU — no worker-clamp needed
+GENERATION_MODEL = "llama-3.1-8b-instant"  # cosmetic label in the eval report
+
 # UI/STT spoken-language codes -> MSMARCO-XI chunk `language` values.
 SPOKEN_TO_INDEX = {
     "ta-IN": "tam_Taml",

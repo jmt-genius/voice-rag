@@ -8,7 +8,7 @@ from uuid import uuid4
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from .answering import grounded_answer
+from .answering import grounded_answer, is_refusal
 from .config import language_filter, settings
 from .contracts import AskResponse, TextQuestion
 from .guardrails import validate_question
@@ -63,6 +63,15 @@ def run_text(question: str, trace_id: str, language: str | None = None, use_gena
         framed = frame_with_grok(question, answer, used, language, genai_key, app.state.cfg.resolved_genai_model, app.state.cfg.resolved_genai_url)
         genai_ms = (time.perf_counter() - genai_started) * 1000
         genai_used = framed is not None
+        if framed and is_refusal(framed):
+            # The LLM evaluated the context against the question and found it inadequate
+            return AskResponse(
+                status="refused",
+                reason=framed,
+                citations=used,
+                timings_ms={"guardrail": round(guard_ms, 2), "retrieval": round(retrieval_ms, 2), "answer": round(answer_ms, 2), "genai": round(genai_ms, 2), "end_to_end_text_core": round(core_total, 2)},
+                trace_id=trace_id,
+            )
     core_total = guard_ms + retrieval_ms + answer_ms
     total = (time.perf_counter() - started) * 1000
     if not answer:
