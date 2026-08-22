@@ -163,7 +163,7 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [recording, setRecording] = useState(false)
   const [language, setLanguage] = useState('ta-IN')
-  const [useGenAI, setUseGenAI] = useState(false)
+  const [useGenAI, setUseGenAI] = useState(true)
   const recorder = useRef(null)
   const chunks = useRef([])
   const canvasRef = useRef(null)
